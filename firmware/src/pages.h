@@ -23,7 +23,7 @@
     ".note{font-size:13px;color:var(--soft);margin:0}.state{font-variant-numeric:tabular-nums}" \
     "</style>"
 
-// ---------------------------------------------------------------- 操作ページ(家の Wi-Fi につながっているとき)
+// ---------------------------------------------------------------- 操作ページ(家の Wi-Fi につながっているとき / 直接つないでいるとき)
 static const char CONTROL_PAGE[] PROGMEM = STRIDER_PAGE_HEAD R"HTML(
 <title>Stackchan Strider</title>
 <style>
@@ -66,7 +66,8 @@ details .card{margin-top:10px}
     <label style="flex-direction:row;align-items:center;gap:8px;color:var(--ink)"><input type="checkbox" id="invert">前進と後退を入れ替える</label>
     <p class="note">「前進」で後ろへ歩く場合にチェックします。本体に保存されます。</p>
     <label style="flex-direction:row;align-items:center;gap:8px;color:var(--ink)"><input type="checkbox" id="smile">歩いている間は笑顔にする</label>
-    <button id="forget">Wi-Fi の設定をやり直す</button>
+    <button id="forget">スマホとのつなぎ方を選び直す</button>
+    <p class="note">「直接つなぐ」と「家の Wi-Fi を使う」を選び直します。いまの設定は消えます。</p>
   </div>
 </details>
 </main>
@@ -79,7 +80,7 @@ function show(s) {
   $("smile").checked = !!s.smile;
   $("state").textContent = (s.dir ? (s.dir > 0 ? "前進中" : "後退中") : "停止中") + " / 電池 " + s.volt.toFixed(2) + " V";
 }
-function lost() { $("state").textContent = "本体と通信できません。Wi-Fi を確認してください"; }
+function lost() { $("state").textContent = "スタックチャンと通信できません。本体の頭の上をさわると画面に QR が出るので、読み直してください"; }
 // 押している間は 0.3 秒ごとに合図を送る。途切れると本体が自動で止まる
 function start(dir, button) {
   held = dir;
@@ -126,28 +127,29 @@ $("up").onclick = () => look(10);
 $("invert").onchange = () => call("/api/invert?on=" + ($("invert").checked ? 1 : 0)).then(show).catch(lost);
 $("smile").onchange = () => call("/api/smile?on=" + ($("smile").checked ? 1 : 0)).then(show).catch(lost);
 $("forget").onclick = () => {
-  if ($("forget").dataset.armed) { call("/api/forget").catch(() => {}); $("state").textContent = "設定を消しました。本体の画面の QR を読んでください"; }
-  else { $("forget").dataset.armed = "1"; $("forget").textContent = "もう一度押すと Wi-Fi の設定を消します"; }
+  if ($("forget").dataset.armed) { call("/api/forget").catch(() => {}); $("state").textContent = "つなぎ方の設定を消しました。スタックチャンの画面で、つなぎ方を選んでください"; }
+  else { $("forget").dataset.armed = "1"; $("forget").textContent = "もう一度押すと、つなぎ方の設定を消します"; }
 };
 look(0);
 call("/api/state").then(show).catch(lost);
 </script></body></html>
 )HTML";
 
-// ---------------------------------------------------------------- 設定ページ(はじめて起動したとき / Wi-Fi につながらないとき)
+// ---------------------------------------------------------------- 設定ページ(「家の Wi-Fi を使う」を選んだとき / 家の Wi-Fi につながらないとき)
 static const char SETUP_PAGE[] PROGMEM = STRIDER_PAGE_HEAD R"HTML(
 <title>Stackchan Strider の設定</title></head><body><main>
 <h1>STACKCHAN <b>STRIDER</b></h1>
 <form class="card" id="form">
-  <h2>家の Wi-Fi につなぐ</h2>
+  <h2>スタックチャンを家の Wi-Fi につなぐ</h2>
   <label>Wi-Fi の名前
     <select id="ssid"><option value="">探しています…</option></select></label>
   <label>パスワード
     <input id="pass" type="password" autocomplete="off" autocapitalize="off"></label>
   <button class="go" id="save">この Wi-Fi につなぐ</button>
   <button type="button" id="rescan">もう一度探す</button>
-  <p class="note" id="msg">2.4GHz の Wi-Fi だけ使えます。パスワードは本体の中にだけ保存されます。</p>
+  <p class="note" id="msg">2.4GHz の Wi-Fi だけ使えます。パスワードはスタックチャンの中にだけ保存されます。</p>
 </form>
+<p class="note">家の Wi-Fi を使わずに操作したいときは、スタックチャンの画面の右上にある「つなぎ方を選び直す」をタッチして、「直接つなぐ」を選んでください。</p>
 </main>
 <script>
 const $ = (id) => document.getElementById(id);
@@ -166,7 +168,7 @@ $("form").onsubmit = (event) => {
   $("save").disabled = true;
   const body = new URLSearchParams({ ssid: $("ssid").value, pass: $("pass").value });
   fetch("/api/wifi", { method: "POST", body: body }).then(() => {
-    $("msg").textContent = "保存しました。本体が再起動して Wi-Fi につなぎます。つながると本体の画面に操作ページの QR が出ます。出ない場合はパスワードを確かめて、もう一度この設定をしてください。";
+    $("msg").textContent = "保存しました。スタックチャンが再起動して、家の Wi-Fi につなぎます。つながるとスタックチャンの画面に QR が出るので、スマホで読んでください。操作ページが開きます。QR が出ない場合はパスワードを確かめて、もう一度この設定をしてください。";
   }).catch(() => { $("save").disabled = false; $("msg").textContent = "保存できませんでした。もう一度押してください"; });
 };
 scan();
