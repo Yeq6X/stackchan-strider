@@ -94,6 +94,7 @@ python -m venv .venv
 .venv\Scripts\python walker\verify_walk.py --json out\verify_walk.json       # 歩行 1 周の干渉・すきま・接地姿勢
 .venv\Scripts\python walker\verify_assembly.py --json out\verify_assembly.json   # 手順どおりに組めるか
 .venv\Scripts\python walker\sim_sweep.py --json out\mujoco\sweep.json        # MuJoCo で 24 条件を歩かせる
+.venv\Scripts\python walker\sim_turn.py --set rock                       # MuJoCo で、無改造のまま曲がれる動かし方を探す
 .venv\Scripts\python walker\export_viewer.py                             # out\viewer\index.html
 .venv\Scripts\python walker\export_guide.py                              # out\guide\index.html
 .venv\Scripts\python walker\publish_files.py                             # print\ と docs\ へ公開用のファイルを写す
@@ -111,6 +112,7 @@ python -m venv .venv
 | `walker/assembly_plan.py` | 脚の組立手順(組立ガイドと検証で共通) |
 | `walker/verify_gears.py`、`verify_walk.py`、`verify_assembly.py` | 検証 |
 | `walker/sim_mujoco.py`、`sim_sweep.py` | MuJoCo の物理モデルと歩行シミュレーション |
+| `walker/sim_turn.py` | MuJoCo で、無改造のまま曲がれる動かし方を探す(頭のうなずき、歩く速さの変化、首の往復) |
 | `walker/build.py` | 造形時の向きで STL と 3MF を出力 |
 | `walker/update_project.py`、`arrange_links.py` | Bambu Studio で並べ直した 3MF の配置を保ったまま、形状を差し替える・リンクを整列する |
 | `walker/export_viewer.py`、`export_guide.py` | ビューアーと組立ガイドの生成 |

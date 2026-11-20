@@ -67,15 +67,43 @@ def _camera_axes(position, target) -> str:
     return _fmt(list(right) + list(up))
 
 
-def build_xml(friction: float) -> str:
+HEAD_PITCH_RATE = math.radians(300)  # うなずきサーボの目標角の速さの上限の仮定 [rad/s]
+HEAD_PITCH_KP = 2.0  # うなずきサーボの位置制御の強さの仮定 [N·m/rad]
+HEAD_PITCH_DAMPING = 0.03
+
+
+def build_xml(friction: float, head: dict | None = None, export_meshes: bool = True, backlash_deg: float = 0.0, servo_torque: float = 1.0, servo_speed: float = 1.0) -> str:
+    """head を渡すと、頭をピッチ軸まわりのヒンジにして、うなずきサーボ(位置制御)を足す。
+
+    head = dict(mass=動く部分の質量[kg], cg_y=ピッチ軸から重心までの前方向の距離[mm](顔が正面のとき), cg_z=同じく上方向[mm])
+    backlash_deg > 0 のとき、ターンテーブルとクランク軸の間に、合計でその角度だけ空回りするあそびを入れる
+    (傘歯車のすきまと六角穴のすきまを 1 つにまとめたもの。左右のクランクが別々にがたつくことは表さない)。
+    servo_torque / servo_speed は、ヨーサーボのストールトルクと無負荷速度に掛ける倍率。
+    """
+    stall, noload = SERVO_STALL * servo_torque, SERVO_NOLOAD * servo_speed
+    if backlash_deg > 0:
+        half = math.radians(backlash_deg) / 2
+        coupling = ""
+        tendon_xml = f'''<tendon>
+    <fixed name="bevel" limited="true" range="{-half:.6f} {half:.6f}" solreflimit="0.002 1">
+      <joint joint="table" coef="1"/>
+      <joint joint="shaft" coef="1"/>
+    </fixed>
+  </tendon>
+  <sensor>
+    <tendonlimitfrc name="bevel_torque" tendon="bevel"/>
+  </sensor>'''
+    else:
+        coupling = '<joint name="bevel" joint1="table" joint2="shaft" polycoef="0 -1 0 0 0" solref="0.002 1"/>'
+        tendon_xml = ""
     mesh_dir = OUT / "meshes"
     mesh_dir.mkdir(parents=True, exist_ok=True)
     defs = d.part_defs()
     instances = {inst.name: inst for inst in d.instances(THETA0)}
     assets, geoms = [], {}
     for name, inst in instances.items():
-        mesh = d.to_trimesh(d.placed(inst))
-        mesh.export(mesh_dir / f"{name}.stl")
+        if export_meshes:
+            d.to_trimesh(d.placed(inst)).export(mesh_dir / f"{name}.stl")
         assets.append(f'<mesh name="{name}" file="meshes/{name}.stl" scale="{MM} {MM} {MM}" inertia="exact"/>')
         printable = defs[inst.part].printable
         density = PRINT_DENSITY if printable else 0
@@ -141,7 +169,23 @@ def build_xml(friction: float) -> str:
 
     head_center = [0, ((d.SC_FRONT - 29.2) / 2 + HEAD_CG_SHIFT_Y) * MM, (d.TABLE_Z1 + (d.SC_HEAD_BOTTOM + d.SC_HEAD_TOP) / 2 + HEAD_CG_SHIFT_Z) * MM]
     start_z = -d.GROUND_Z * MM + 0.002
-    chassis_names = ["side_plate_R", "side_plate_L", "deck", "yoke", "sc_servo", "sc_head", "sc_core", "sc_face", "sc_eyes", "sc_camera", "sc_leds"]
+    head_names = ["sc_head", "sc_core", "sc_face", "sc_eyes", "sc_camera", "sc_leds"]
+    chassis_names = ["side_plate_R", "side_plate_L", "deck", "yoke", "sc_servo"]
+    contact = f'friction="{friction} 0.005 0.0001"'
+    if head is None:
+        chassis_names += head_names
+        head_xml = f'<geom name="head_mass" type="box" pos="{_fmt(head_center)}" size="0.025 0.025 0.025" mass="{SC_HEAD_MASS:.4f}" rgba="0 0 0 0" group="3" {contact}/>'
+        pitch_actuator = ""
+    else:
+        fixed_mass = SC_HEAD_MASS - head["mass"]
+        moving_center = [0, head["cg_y"] * MM, (d.PITCH_Z + head["cg_z"]) * MM]
+        head_xml = f'''<geom name="neck_mass" type="box" pos="0 0 {(d.TABLE_Z1 + 22) * MM:.5f}" size="0.015 0.015 0.012" mass="{fixed_mass:.4f}" rgba="0 0 0 0" contype="0" conaffinity="0" group="3"/>
+      <body name="head">
+        <joint name="head_pitch" type="hinge" axis="1 0 0" pos="0 0 {d.PITCH_Z * MM:.5f}" range="0 {math.pi / 2:.5f}" damping="{HEAD_PITCH_DAMPING}"/>
+        {geom_lines(head_names)}
+        <geom name="head_mass" type="box" pos="{_fmt(moving_center)}" size="0.025 0.025 0.025" mass="{head["mass"]:.4f}" rgba="0 0 0 0" group="3" {contact}/>
+      </body>'''
+        pitch_actuator = f'<position name="pitch_servo" joint="head_pitch" kp="{HEAD_PITCH_KP}" ctrlrange="0 {math.pi / 2:.5f}" forcerange="{-SERVO_STALL} {SERVO_STALL}"/>'
     shaft_names = ["pinion", "shaft", "sleeve", "crank_R", "crank_L", "clip_R", "clip_L"]
     table_names = ["gear_table", "socket_frame", "sc_base"]
     return f'''<mujoco model="stackchan_strider">
@@ -170,7 +214,7 @@ def build_xml(friction: float) -> str:
       <camera name="track" mode="trackcom" pos="{_fmt(CAMERA_POS)}" xyaxes="{_camera_axes(CAMERA_POS, CAMERA_TARGET)}"/>
       <camera name="side" mode="trackcom" pos="0.42 0 0.02" xyaxes="0 1 0 0 0 1"/>
       {geom_lines(chassis_names)}
-      <geom name="head_mass" type="box" pos="{_fmt(head_center)}" size="0.025 0.025 0.025" mass="{SC_HEAD_MASS:.4f}" rgba="0 0 0 0" group="3" friction="{friction} 0.005 0.0001"/>
+      {head_xml}
       <geom name="belly" type="box" pos="0 0 -0.004" size="0.027 0.042 0.010" mass="0" rgba="0 0 0 0" group="3" friction="{friction} 0.005 0.0001"/>
       {chr(10).join(legs_xml["chassis"])}
       <body name="shaft">
@@ -186,11 +230,13 @@ def build_xml(friction: float) -> str:
     </body>
   </worldbody>
   <equality>
-    <joint name="bevel" joint1="table" joint2="shaft" polycoef="0 -1 0 0 0" solref="0.002 1"/>
+    {coupling}
     {chr(10).join(equalities)}
   </equality>
+  {tendon_xml}
   <actuator>
-    <general name="yaw_servo" joint="table" ctrlrange="-1 1" gaintype="fixed" gainprm="{SERVO_STALL}" biastype="affine" biasprm="0 0 {-SERVO_STALL / SERVO_NOLOAD:.6f}" forcerange="{-SERVO_STALL} {SERVO_STALL}"/>
+    <general name="yaw_servo" joint="table" ctrlrange="-1 1" gaintype="fixed" gainprm="{stall}" biastype="affine" biasprm="0 0 {-stall / noload:.6f}" forcerange="{-stall} {stall}"/>
+    {pitch_actuator}
   </actuator>
 </mujoco>
 '''
