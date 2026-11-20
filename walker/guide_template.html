@@ -1,5 +1,5 @@
 <title>Stackchan Strider 組立ガイド</title>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+JP:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+JP:wght@400;500;700&family=Noto+Sans+SC:wght@400;500;700&display=swap">
 <style>
 /* レイアウト: 3D の作業台を画面に固定し、その横(狭い画面では下)を説明カードが流れる。スクロール位置がそのまま組立の進み具合になる。 */
 :root {
@@ -33,6 +33,12 @@
   --signal: #ff6257; --signal-ink: #1f0705; --note: #33181a; --note-ink: #ffc9c4;
   --stage-top: #1d222a; --stage-bottom: #12151a; color-scheme: dark;
 }
+/* 中国語(簡体字)は字形が日本語と違うので、書体を入れ替える */
+:root:lang(zh) {
+  --font-display: "Chakra Petch", "Noto Sans SC", system-ui, sans-serif;
+  --font-body: "Noto Sans SC", system-ui, -apple-system, "PingFang SC", "Microsoft YaHei UI", sans-serif;
+  --font-data: "IBM Plex Mono", "Noto Sans SC", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
 [hidden] { display: none !important; }
 body {
   background: var(--bench); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.75;
@@ -47,6 +53,10 @@ body {
 .progress i { display: block; height: 100%; width: 0; background: var(--signal); }
 .now { position: absolute; left: 14px; top: 12px; font: 600 12px var(--font-display); letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-soft); pointer-events: none; }
 .now b { color: var(--ink); font-weight: 700; }
+.lang { position: absolute; right: 10px; top: 9px; display: flex; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); }
+.lang button { border: 0; border-radius: 6px; padding: 2px 9px; background: none; color: var(--ink-soft); font: 500 12px/1.6 var(--font-body); cursor: pointer; }
+.lang button[aria-pressed="true"] { background: var(--ink); color: var(--card); }
+.lang button:focus-visible { outline: 2px solid var(--signal); outline-offset: 1px; }
 .flip-label { position: absolute; left: 0; top: 0; padding: 3px 9px; border-radius: 6px; background: rgba(16, 20, 26, 0.55); color: #fff; font: 700 13px var(--font-display); white-space: nowrap; pointer-events: none; will-change: transform; }
 .drag-hint { position: absolute; right: 12px; bottom: 10px; font-size: 11px; color: var(--ink-soft); pointer-events: none; }
 .fail { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; color: var(--note-ink); }
@@ -110,188 +120,193 @@ ol.do li.current { color: var(--signal); font-weight: 700; }
 </style>
 
 <div class="guide">
-  <div class="stage" aria-label="組立の 3D アニメーション">
+  <div class="stage" aria-label="組立の 3D アニメーション" data-i18n-aria="aria.stage">
     <div class="stage-frame">
       <canvas id="view"></canvas>
       <div class="progress"><i id="bar"></i></div>
       <div class="now" id="now"></div>
       <div id="flip-labels"></div>
-      <div class="drag-hint">横にドラッグで回転</div>
-      <div class="fail" id="fail" hidden>3D 表示を開始できませんでした。WebGL が使えるブラウザで開いてください。手順の文章はそのまま読めます。</div>
+      <div class="lang" id="lang" role="group" aria-label="言語" data-i18n-aria="aria.lang">
+        <button type="button" data-lang="ja" lang="ja" aria-pressed="true">日本語</button>
+        <button type="button" data-lang="en" lang="en" aria-pressed="false">English</button>
+        <button type="button" data-lang="zh" lang="zh-Hans" aria-pressed="false">中文</button>
+      </div>
+      <div class="drag-hint" data-i18n="stage.drag">横にドラッグで回転</div>
+      <div class="fail" id="fail" hidden data-i18n="stage.fail">3D 表示を開始できませんでした。WebGL が使えるブラウザで開いてください。手順の文章はそのまま読めます。</div>
     </div>
   </div>
 
   <main class="steps">
     <section class="step hero" id="top" data-label="完成">
       <div class="card">
-        <p class="eyebrow">組立ガイド</p>
+        <p class="eyebrow" data-i18n="hero.eyebrow">組立ガイド</p>
         <h1>Stackchan <b>Strider</b></h1>
-        <p class="lead">スタックチャンの首振りサーボ1個で歩く、3D プリントの4脚ベース。ネジも接着剤も使わず、はめるだけで組み立てます。</p>
+        <p class="lead" data-i18n="hero.lead">スタックチャンの首振りサーボ1個で歩く、3D プリントの4脚ベース。ネジも接着剤も使わず、はめるだけで組み立てます。</p>
         <dl class="facts">
-          <div><dt>印刷部品</dt><dd id="fact-parts">37 個</dd></div>
-          <div><dt>工具・ネジ</dt><dd>不要</dd></div>
-          <div><dt>印刷時間の目安</dt><dd>5 時間 16 分</dd></div>
-          <div><dt>フィラメント</dt><dd>123 g</dd></div>
+          <div><dt data-i18n="hero.k1">印刷部品</dt><dd id="fact-parts">37 個</dd></div>
+          <div><dt data-i18n="hero.k2">工具・ネジ</dt><dd data-i18n="hero.v1">不要</dd></div>
+          <div><dt data-i18n="hero.k3">印刷時間の目安</dt><dd data-i18n="hero.v2">5 時間 16 分</dd></div>
+          <div><dt data-i18n="hero.k4">フィラメント</dt><dd>123 g</dd></div>
         </dl>
-        <div class="swatches" id="swatches" role="group" aria-label="表示する色"></div>
-        <p class="scroll-cue">下へスクロールすると、組み立てが始まります</p>
+        <div class="swatches" id="swatches" role="group" aria-label="表示する色" data-i18n-aria="aria.colors"></div>
+        <p class="scroll-cue" data-i18n="hero.cue">下へスクロールすると、組み立てが始まります</p>
       </div>
     </section>
 
     <section class="step" id="step-parts" data-label="部品">
       <div class="card">
-        <p class="eyebrow">準備</p>
-        <h2>部品を 3 色に分けて印刷する</h2>
-        <p>印刷データは 3 プレートです。全部サポートなしで、色ごとにフィラメントを替えて刷ります。</p>
+        <p class="eyebrow" data-i18n="parts.eyebrow">準備</p>
+        <h2 data-i18n="parts.h">部品を 3 色に分けて印刷する</h2>
+        <p data-i18n="parts.p1">印刷データは 3 プレートです。全部サポートなしで、色ごとにフィラメントを替えて刷ります。</p>
         <div class="tablewrap">
           <table>
-            <thead><tr><th>プレート</th><th>個数</th><th>使用量</th><th>時間</th></tr></thead>
+            <thead><tr><th data-i18n="parts.th1">プレート</th><th data-i18n="parts.th2">個数</th><th data-i18n="parts.th3">使用量</th><th data-i18n="parts.th4">時間</th></tr></thead>
             <tbody>
-              <tr><td>Frame(骨格)</td><td class="num">4</td><td class="num">35.7 g</td><td class="num">1:17</td></tr>
-              <tr><td>Accent(主役)</td><td class="num">13</td><td class="num">67.9 g</td><td class="num">2:46</td></tr>
-              <tr><td>Links(つなぎ)</td><td class="num">40</td><td class="num">19.2 g</td><td class="num">1:05</td></tr>
+              <tr><td data-i18n="parts.td1">Frame(骨格)</td><td class="num">4</td><td class="num">35.7 g</td><td class="num">1:17</td></tr>
+              <tr><td data-i18n="parts.td2">Accent(主役)</td><td class="num">13</td><td class="num">67.9 g</td><td class="num">2:46</td></tr>
+              <tr><td data-i18n="parts.td3">Links(つなぎ)</td><td class="num">40</td><td class="num">19.2 g</td><td class="num">1:05</td></tr>
             </tbody>
           </table>
         </div>
-        <p>脚の部品には刻印があります。<strong>数字はリンクの番号、英字はつなぐ場所</strong>です。同じ英字どうしをつなげば組み上がります。</p>
+        <p data-i18n="parts.p2">脚の部品には刻印があります。<strong>数字はリンクの番号、英字はつなぐ場所</strong>です。同じ英字どうしをつなげば組み上がります。</p>
         <dl class="marks">
-          <dt>1</dt><dd>両端が C と D</dd>
-          <dt>2</dt><dd>両端が C と F</dd>
-          <dt>3</dt><dd>両端が B と F</dd>
-          <dt>4</dt><dd>両端が E と G</dd>
-          <dt>B D E</dt><dd>上の三角板の3つの穴</dd>
-          <dt>F G</dt><dd>下の三角板の2つの穴(刻印のない角が足先)</dd>
+          <dt>1</dt><dd data-i18n="parts.v1">両端が C と D</dd>
+          <dt>2</dt><dd data-i18n="parts.v2">両端が C と F</dd>
+          <dt>3</dt><dd data-i18n="parts.v3">両端が B と F</dd>
+          <dt>4</dt><dd data-i18n="parts.v4">両端が E と G</dd>
+          <dt>B D E</dt><dd data-i18n="parts.v5">上の三角板の3つの穴</dd>
+          <dt>F G</dt><dd data-i18n="parts.v6">下の三角板の2つの穴(刻印のない角が足先)</dd>
         </dl>
       </div>
     </section>
 
     <section class="step" id="step-1" data-label="手順 1">
       <div class="card">
-        <p class="eyebrow">手順 1 / 8</p>
-        <h2>デッキにピニオンと左の側板を付ける</h2>
+        <p class="eyebrow" data-i18n="s1.eyebrow">手順 1 / 8</p>
+        <h2 data-i18n="s1.h">デッキにピニオンと左の側板を付ける</h2>
         <ol class="do">
-          <li>ピニオンの歯の側から伸びている長い筒を、側板の丸い穴に内側から通します。</li>
-          <li>デッキの左側の2本のほぞを、側板の角穴に「カチッ」と止まるまで押し込みます。</li>
+          <li data-i18n="s1.li1">ピニオンの歯の側から伸びている長い筒を、側板の丸い穴に内側から通します。</li>
+          <li data-i18n="s1.li2">デッキの左側の2本のほぞを、側板の角穴に「カチッ」と止まるまで押し込みます。</li>
         </ol>
-        <ul class="parts"><li class="chassis">デッキ <b>×1</b></li><li class="accent">ピニオン <b>×1</b></li><li class="chassis">側板 <b>×1</b></li></ul>
-        <p class="tip">側板は左右とも同じ部品です。<strong>突起(スタッド)が外側</strong>を向くように付けます。</p>
+        <ul class="parts"><li class="chassis" data-i18n="s1.chip1">デッキ <b>×1</b></li><li class="accent" data-i18n="s1.chip2">ピニオン <b>×1</b></li><li class="chassis" data-i18n="s1.chip3">側板 <b>×1</b></li></ul>
+        <p class="tip" data-i18n="s1.tip">側板は左右とも同じ部品です。<strong>突起(スタッド)が外側</strong>を向くように付けます。</p>
       </div>
     </section>
 
     <section class="step" id="step-2" data-label="手順 2">
       <div class="card">
-        <p class="eyebrow">手順 2 / 8</p>
-        <h2>右の側板とスリーブを付ける</h2>
+        <p class="eyebrow" data-i18n="s2.eyebrow">手順 2 / 8</p>
+        <h2 data-i18n="s2.h">右の側板とスリーブを付ける</h2>
         <ol class="do">
-          <li>右の側板を、デッキの右側のほぞに押し込みます。</li>
-          <li>短いスリーブを、右の側板の丸い穴に外から差し込みます。</li>
+          <li data-i18n="s2.li1">右の側板を、デッキの右側のほぞに押し込みます。</li>
+          <li data-i18n="s2.li2">短いスリーブを、右の側板の丸い穴に外から差し込みます。</li>
         </ol>
-        <ul class="parts"><li class="chassis">側板 <b>×1</b></li><li class="link">スリーブ <b>×1</b></li></ul>
+        <ul class="parts"><li class="chassis" data-i18n="s2.chip1">側板 <b>×1</b></li><li class="link" data-i18n="s2.chip2">スリーブ <b>×1</b></li></ul>
       </div>
     </section>
 
     <section class="step" id="step-3" data-label="手順 3">
       <div class="card">
-        <p class="eyebrow">手順 3 / 8</p>
-        <h2>シャフトを通し、クランクを付ける</h2>
+        <p class="eyebrow" data-i18n="s3.eyebrow">手順 3 / 8</p>
+        <h2 data-i18n="s3.h">シャフトを通し、クランクを付ける</h2>
         <ol class="do">
-          <li>六角シャフトを右から差し、スリーブとピニオンに通します。</li>
-          <li>シャフトの両端にクランクを差し込みます。</li>
+          <li data-i18n="s3.li1">六角シャフトを右から差し、スリーブとピニオンに通します。</li>
+          <li data-i18n="s3.li2">シャフトの両端にクランクを差し込みます。</li>
         </ol>
-        <ul class="parts"><li class="link">六角シャフト <b>×1</b></li><li class="accent">クランク <b>×2</b></li></ul>
-        <p class="tip"><strong>左右のクランクのピンは、必ず反対向き(180°)</strong>にします。同じ向きだと歩きません。</p>
+        <ul class="parts"><li class="link" data-i18n="s3.chip1">六角シャフト <b>×1</b></li><li class="accent" data-i18n="s3.chip2">クランク <b>×2</b></li></ul>
+        <p class="tip" data-i18n="s3.tip"><strong>左右のクランクのピンは、必ず反対向き(180°)</strong>にします。同じ向きだと歩きません。</p>
       </div>
     </section>
 
     <section class="step" id="step-4" data-label="手順 4">
       <div class="card">
-        <p class="eyebrow">手順 4 / 8</p>
-        <h2>ターンテーブル歯車とソケット枠を載せる</h2>
+        <p class="eyebrow" data-i18n="s4.eyebrow">手順 4 / 8</p>
+        <h2 data-i18n="s4.h">ターンテーブル歯車とソケット枠を載せる</h2>
         <ol class="do">
-          <li>歯車の歯を下に向け、中央の軸をデッキの丸いボスに落とし込みます。</li>
-          <li>ソケット枠の3つのツメを、歯車の円板の角穴に合わせて載せます。</li>
+          <li data-i18n="s4.li1">歯車の歯を下に向け、中央の軸をデッキの丸いボスに落とし込みます。</li>
+          <li data-i18n="s4.li2">ソケット枠の3つのツメを、歯車の円板の角穴に合わせて載せます。</li>
         </ol>
-        <ul class="parts"><li class="accent">ターンテーブル歯車 <b>×1</b></li><li class="chassis">ソケット枠 <b>×1</b></li></ul>
-        <p class="tip">円板を手で回して、クランクが一緒に回れば歯車は噛み合っています。</p>
+        <ul class="parts"><li class="accent" data-i18n="s4.chip1">ターンテーブル歯車 <b>×1</b></li><li class="chassis" data-i18n="s4.chip2">ソケット枠 <b>×1</b></li></ul>
+        <p class="tip" data-i18n="s4.tip">円板を手で回して、クランクが一緒に回れば歯車は噛み合っています。</p>
       </div>
     </section>
 
     <section class="step" id="step-5" data-label="手順 5">
       <div class="card">
-        <p class="eyebrow">手順 5 / 8</p>
-        <h2>ヨークをかぶせる</h2>
-        <p>ヨークを上からかぶせ、側板の4本のツノに「カチッ」と止まるまで押し込みます。輪の内側の返しが、歯車の浮き上がりを押さえます。</p>
-        <ul class="parts"><li class="accent">ヨーク <b>×1</b></li></ul>
-        <p class="tip">左右に立っている丸いパッドが、あとでスタックチャンの頭を挟みます。</p>
+        <p class="eyebrow" data-i18n="s5.eyebrow">手順 5 / 8</p>
+        <h2 data-i18n="s5.h">ヨークをかぶせる</h2>
+        <p data-i18n="s5.p1">ヨークを上からかぶせ、側板の4本のツノに「カチッ」と止まるまで押し込みます。輪の内側の返しが、歯車の浮き上がりを押さえます。</p>
+        <ul class="parts"><li class="accent" data-i18n="s5.chip1">ヨーク <b>×1</b></li></ul>
+        <p class="tip" data-i18n="s5.tip">左右に立っている丸いパッドが、あとでスタックチャンの頭を挟みます。</p>
       </div>
     </section>
 
     <section class="step long" id="step-6" data-label="手順 6">
       <div class="card">
-        <p class="eyebrow">手順 6 / 8</p>
-        <h2>右側の脚を2本組む</h2>
-        <p><strong>先に机の上で</strong>、リンク 4 に三角板を付けた組を4つ作っておきます。リンク 4 の E の突起に上の三角板の E を、G の突起に下の三角板の G を通し、それぞれ突起の溝に C クリップを横からはめます。</p>
+        <p class="eyebrow" data-i18n="s6.eyebrow">手順 6 / 8</p>
+        <h2 data-i18n="s6.h">右側の脚を2本組む</h2>
+        <p data-i18n="s6.p1"><strong>先に机の上で</strong>、リンク 4 に三角板を付けた組を4つ作っておきます。リンク 4 の E の突起に上の三角板の E を、G の突起に下の三角板の G を通し、それぞれ突起の溝に C クリップを横からはめます。</p>
         <ol class="do" id="leg-steps-7">
-          <li>クランクを回して、ピンを<strong>後ろ</strong>へ水平に向けておきます。</li>
-          <li>後ろ脚のリンク 3 の B を側板の後ろの突起に、リンク 1 の C をクランクのピンに通します。</li>
-          <li>三角板の組を重ねます。上の三角板は B と D に、下の三角板は F に入ります。</li>
-          <li>B と D の突起の溝に、C クリップをはめます。</li>
-          <li>前脚のリンク 3 を側板の前の突起に、リンク 1 をピンに通します。</li>
-          <li>後ろ脚のリンク 2 を F とピンに通し、F に C クリップをはめます。</li>
-          <li>前脚の三角板の組を重ね、B と D に C クリップをはめます。</li>
-          <li>前脚のリンク 2 を F とピンに通し、F に C クリップをはめます。</li>
-          <li>最後に、ピンの先の溝に C クリップをはめます。</li>
+          <li data-i18n="s6.li1">クランクを回して、ピンを<strong>後ろ</strong>へ水平に向けておきます。</li>
+          <li data-i18n="s6.li2">後ろ脚のリンク 3 の B を側板の後ろの突起に、リンク 1 の C をクランクのピンに通します。</li>
+          <li data-i18n="s6.li3">三角板の組を重ねます。上の三角板は B と D に、下の三角板は F に入ります。</li>
+          <li data-i18n="s6.li4">B と D の突起の溝に、C クリップをはめます。</li>
+          <li data-i18n="s6.li5">前脚のリンク 3 を側板の前の突起に、リンク 1 をピンに通します。</li>
+          <li data-i18n="s6.li6">後ろ脚のリンク 2 を F とピンに通し、F に C クリップをはめます。</li>
+          <li data-i18n="s6.li7">前脚の三角板の組を重ね、B と D に C クリップをはめます。</li>
+          <li data-i18n="s6.li8">前脚のリンク 2 を F とピンに通し、F に C クリップをはめます。</li>
+          <li data-i18n="s6.li9">最後に、ピンの先の溝に C クリップをはめます。</li>
         </ol>
-        <ul class="parts"><li class="link">リンク 1〜4 <b>各×2</b></li><li class="accent">三角板 <b>上下各×2</b></li><li class="link">C クリップ <b>×11</b></li></ul>
-        <p class="small">いま組んでいる脚の<strong>刻印が光ります</strong>。同じ英字どうしをつなぎます。</p>
-        <p class="tip"><strong>突起も穴も丸いので、向き合わせは要りません。</strong>重ねて、クリップをはめるだけです。前脚は部品が1層ぶん外側に付き、下の三角板は<strong>裏返して</strong>足先の幅広い部分を内側に向けます。</p>
+        <ul class="parts"><li class="link" data-i18n="s6.chip1">リンク 1〜4 <b>各×2</b></li><li class="accent" data-i18n="s6.chip2">三角板 <b>上下各×2</b></li><li class="link" data-i18n="s6.chip3">C クリップ <b>×11</b></li></ul>
+        <p class="small" data-i18n="s6.small">いま組んでいる脚の<strong>刻印が光ります</strong>。同じ英字どうしをつなぎます。</p>
+        <p class="tip" data-i18n="s6.tip"><strong>突起も穴も丸いので、向き合わせは要りません。</strong>重ねて、クリップをはめるだけです。前脚は部品が1層ぶん外側に付き、下の三角板は<strong>裏返して</strong>足先の幅広い部分を内側に向けます。</p>
       </div>
     </section>
 
     <section class="step long" id="step-7" data-label="手順 7">
       <div class="card">
-        <p class="eyebrow">手順 7 / 8</p>
-        <h2>左側の脚を2本組む</h2>
-        <p>右側と同じ要領ですが、<strong>前後が入れ替わります</strong>。左側は前脚から組みます。</p>
+        <p class="eyebrow" data-i18n="s7.eyebrow">手順 7 / 8</p>
+        <h2 data-i18n="s7.h">左側の脚を2本組む</h2>
+        <p data-i18n="s7.p1">右側と同じ要領ですが、<strong>前後が入れ替わります</strong>。左側は前脚から組みます。</p>
         <ol class="do" id="leg-steps-8">
-          <li>クランクを回して、左のピンを<strong>前</strong>へ水平に向けておきます。</li>
-          <li>前脚のリンク 3 の B を側板の前の突起に、リンク 1 の C をクランクのピンに通します。</li>
-          <li>三角板の組を重ねます(B・D・F)。</li>
-          <li>B と D の突起の溝に、C クリップをはめます。</li>
-          <li>後ろ脚のリンク 3 を側板の後ろの突起に、リンク 1 をピンに通します。</li>
-          <li>前脚のリンク 2 を F とピンに通し、F に C クリップをはめます。</li>
-          <li>後ろ脚の三角板の組を重ね、B と D に C クリップをはめます。</li>
-          <li>後ろ脚のリンク 2 を F とピンに通し、F に C クリップをはめます。</li>
-          <li>最後に、ピンの先の溝に C クリップをはめます。</li>
+          <li data-i18n="s7.li1">クランクを回して、左のピンを<strong>前</strong>へ水平に向けておきます。</li>
+          <li data-i18n="s7.li2">前脚のリンク 3 の B を側板の前の突起に、リンク 1 の C をクランクのピンに通します。</li>
+          <li data-i18n="s7.li3">三角板の組を重ねます(B・D・F)。</li>
+          <li data-i18n="s7.li4">B と D の突起の溝に、C クリップをはめます。</li>
+          <li data-i18n="s7.li5">後ろ脚のリンク 3 を側板の後ろの突起に、リンク 1 をピンに通します。</li>
+          <li data-i18n="s7.li6">前脚のリンク 2 を F とピンに通し、F に C クリップをはめます。</li>
+          <li data-i18n="s7.li7">後ろ脚の三角板の組を重ね、B と D に C クリップをはめます。</li>
+          <li data-i18n="s7.li8">後ろ脚のリンク 2 を F とピンに通し、F に C クリップをはめます。</li>
+          <li data-i18n="s7.li9">最後に、ピンの先の溝に C クリップをはめます。</li>
         </ol>
-        <ul class="parts"><li class="link">リンク 1〜4 <b>各×2</b></li><li class="accent">三角板 <b>上下各×2</b></li><li class="link">C クリップ <b>×11</b></li></ul>
-        <p class="tip">左側では、<strong>後ろ脚</strong>が1層ぶん外側に付き、下の三角板を裏返すのも後ろ脚です。左のピンは、右のピンと反対向きに付いています。</p>
+        <ul class="parts"><li class="link" data-i18n="s7.chip1">リンク 1〜4 <b>各×2</b></li><li class="accent" data-i18n="s7.chip2">三角板 <b>上下各×2</b></li><li class="link" data-i18n="s7.chip3">C クリップ <b>×11</b></li></ul>
+        <p class="tip" data-i18n="s7.tip">左側では、<strong>後ろ脚</strong>が1層ぶん外側に付き、下の三角板を裏返すのも後ろ脚です。左のピンは、右のピンと反対向きに付いています。</p>
       </div>
     </section>
 
     <section class="step" id="step-8" data-label="手順 8">
       <div class="card">
-        <p class="eyebrow">手順 8 / 8</p>
-        <h2>スタックチャンを載せる</h2>
-        <p>土台をソケット枠のくぼみにはめ、頭を左右のパッドの間に入れます。置くだけで固定は不要です。充電するときは、そのまま持ち上げて外します。</p>
-        <ul class="parts"><li class="sc">スタックチャン(M5Stack 製品版)<b>×1</b></li></ul>
-        <p class="tip">頭はパッドに挟まれて左右には回れませんが、上下にうなずくことはできます。</p>
+        <p class="eyebrow" data-i18n="s8.eyebrow">手順 8 / 8</p>
+        <h2 data-i18n="s8.h">スタックチャンを載せる</h2>
+        <p data-i18n="s8.p1">土台をソケット枠のくぼみにはめ、頭を左右のパッドの間に入れます。置くだけで固定は不要です。充電するときは、そのまま持ち上げて外します。</p>
+        <ul class="parts"><li class="sc" data-i18n="s8.chip1">スタックチャン(M5Stack 製品版)<b>×1</b></li></ul>
+        <p class="tip" data-i18n="s8.tip">頭はパッドに挟まれて左右には回れませんが、上下にうなずくことはできます。</p>
       </div>
     </section>
 
     <section class="step" id="step-walk" data-label="歩行">
       <div class="card">
-        <p class="eyebrow">完成</p>
-        <h2>首を回すと、歩き出す</h2>
-        <p>首振り(ヨー)のサーボを連続回転させます。頭は回れないので、代わりに土台と歯車が回り、4本の脚が動きます。</p>
+        <p class="eyebrow" data-i18n="walk.eyebrow">完成</p>
+        <h2 data-i18n="walk.h">首を回すと、歩き出す</h2>
+        <p data-i18n="walk.p1">首振り(ヨー)のサーボを連続回転させます。頭は回れないので、代わりに土台と歯車が回り、4本の脚が動きます。</p>
         <ol class="do">
-          <li>ファームウェアを書き込みます(手順はリポジトリの <code>firmware/README.md</code>)。</li>
-          <li>画面に出る QR をスマホで読み、家の Wi-Fi を設定します。</li>
-          <li>つながると操作ページの QR が出ます。読むと、スマホのブラウザに操作ページが開きます。</li>
-          <li>「前進」「後退」を押している間だけ歩きます。離すと止まります。</li>
+          <li data-i18n="walk.li1">ファームウェアを書き込みます(手順はリポジトリの <code>firmware/README.md</code>)。</li>
+          <li data-i18n="walk.li2">画面に出る QR をスマホで読み、家の Wi-Fi を設定します。</li>
+          <li data-i18n="walk.li3">つながると操作ページの QR が出ます。読むと、スマホのブラウザに操作ページが開きます。</li>
+          <li data-i18n="walk.li4">「前進」「後退」を押している間だけ歩きます。離すと止まります。</li>
         </ol>
-        <p class="small">操作ページの QR は、頭の上をさわって離すと、もう一度出せます。</p>
-        <p class="tip">平らな机の上で、<strong>速さは 6 割以下</strong>が目安です(シミュレーションで <span id="fact-speed">毎秒 約 3 cm</span>)。歩いている間は土台が回り続けるので、USB ケーブルは外します。</p>
+        <p class="small" data-i18n="walk.small">操作ページの QR は、頭の上をさわって離すと、もう一度出せます。</p>
+        <p class="tip" data-i18n="walk.tip">平らな机の上で、<strong>速さは 6 割以下</strong>が目安です(シミュレーションで <span id="fact-speed">毎秒 約 3 cm</span>)。歩いている間は土台が回り続けるので、USB ケーブルは外します。</p>
       </div>
     </section>
   </main>
@@ -299,6 +314,226 @@ ol.do li.current { color: var(--signal); font-weight: 700; }
 
 <script type="application/json" id="guide-data">/*__DATA__*/</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+// 訳文。キーは本文の data-i18n / data-i18n-aria と、手順の名前(label.<section の id>)に対応する。
+// 日本語の文は本文の HTML が原文なので、ここの ja にはスクリプトが組み立てる文だけを書く。{n} には数が入る。
+const GUIDE_I18N = {
+  ja: {
+    "fact.parts": "{n} 個", "fact.speed": "毎秒 約 {n} cm", "flip": "裏返す",
+    "preset.design": "設計の色", "preset.gbw": "グレー・ブルー・ホワイト",
+  },
+  en: {
+    "title": "Stackchan Strider Assembly Guide",
+    "fact.parts": "{n}", "fact.speed": "about {n} cm/s", "flip": "Flip",
+    "preset.design": "Design colors", "preset.gbw": "Gray / Blue / White",
+    "aria.stage": "3D animation of the assembly", "aria.lang": "Language", "aria.colors": "Colors shown",
+    "stage.drag": "Drag sideways to rotate",
+    "stage.fail": "Could not start the 3D view. Open this page in a browser that supports WebGL. The written steps can still be read as they are.",
+    "label.top": "Finished", "label.step-parts": "Parts", "label.step-1": "Step 1", "label.step-2": "Step 2", "label.step-3": "Step 3", "label.step-4": "Step 4",
+    "label.step-5": "Step 5", "label.step-6": "Step 6", "label.step-7": "Step 7", "label.step-8": "Step 8", "label.step-walk": "Walking",
+
+    "hero.eyebrow": "Assembly guide",
+    "hero.lead": "A 3D-printed four-legged base that walks on Stack-chan's single neck-pan servo. No screws and no glue: every part just snaps into place.",
+    "hero.k1": "Printed parts", "hero.k2": "Tools and screws", "hero.v1": "None", "hero.k3": "Approx. print time", "hero.v2": "5 h 16 min", "hero.k4": "Filament",
+    "hero.cue": "Scroll down to start the assembly",
+
+    "parts.eyebrow": "Preparation",
+    "parts.h": "Print the parts in three colors",
+    "parts.p1": "The print files come as three plates. All of them print without supports; change the filament for each color.",
+    "parts.th1": "Plate", "parts.th2": "Parts", "parts.th3": "Filament", "parts.th4": "Time",
+    "parts.td1": "Frame (structure)", "parts.td2": "Accent (feature parts)", "parts.td3": "Links (connectors)",
+    "parts.p2": "The leg parts are engraved. <strong>Numbers are link numbers, letters are the joints.</strong> Join matching letters and the leg comes together.",
+    "parts.v1": "Ends are C and D", "parts.v2": "Ends are C and F", "parts.v3": "Ends are B and F", "parts.v4": "Ends are E and G",
+    "parts.v5": "The three holes of the upper triangle plate",
+    "parts.v6": "The two holes of the lower triangle plate (the unmarked corner is the foot)",
+
+    "s1.eyebrow": "Step 1 / 8",
+    "s1.h": "Fit the pinion and the left side plate to the deck",
+    "s1.li1": "Pass the long tube that extends from the toothed side of the pinion through the round hole of the side plate, from the inside.",
+    "s1.li2": "Push the two tenons on the left of the deck into the square holes of the side plate until they click.",
+    "s1.chip1": "Deck <b>×1</b>", "s1.chip2": "Pinion <b>×1</b>", "s1.chip3": "Side plate <b>×1</b>",
+    "s1.tip": "The left and right side plates are the same part. Fit them with <strong>the studs facing outward</strong>.",
+
+    "s2.eyebrow": "Step 2 / 8",
+    "s2.h": "Fit the right side plate and the sleeve",
+    "s2.li1": "Push the right side plate onto the tenons on the right of the deck.",
+    "s2.li2": "Insert the short sleeve into the round hole of the right side plate from the outside.",
+    "s2.chip1": "Side plate <b>×1</b>", "s2.chip2": "Sleeve <b>×1</b>",
+
+    "s3.eyebrow": "Step 3 / 8",
+    "s3.h": "Insert the shaft and fit the cranks",
+    "s3.li1": "Insert the hex shaft from the right, through the sleeve and the pinion.",
+    "s3.li2": "Push a crank onto each end of the shaft.",
+    "s3.chip1": "Hex shaft <b>×1</b>", "s3.chip2": "Crank <b>×2</b>",
+    "s3.tip": "<strong>The pins of the left and right cranks must point in opposite directions (180°).</strong> It will not walk if they point the same way.",
+
+    "s4.eyebrow": "Step 4 / 8",
+    "s4.h": "Set the turntable gear and the socket frame in place",
+    "s4.li1": "With the teeth facing down, drop the gear's center axle into the round boss on the deck.",
+    "s4.li2": "Line up the three tabs of the socket frame with the square holes in the gear's disc and set it on.",
+    "s4.chip1": "Turntable gear <b>×1</b>", "s4.chip2": "Socket frame <b>×1</b>",
+    "s4.tip": "Turn the disc by hand. If the cranks turn with it, the gears are meshing.",
+
+    "s5.eyebrow": "Step 5 / 8",
+    "s5.h": "Fit the yoke",
+    "s5.p1": "Lower the yoke from above and push it onto the four horns of the side plates until it clicks. The lip inside the ring keeps the gear from lifting.",
+    "s5.chip1": "Yoke <b>×1</b>",
+    "s5.tip": "The round pads standing on the left and right will later hold Stack-chan's head between them.",
+
+    "s6.eyebrow": "Step 6 / 8",
+    "s6.h": "Build the two right legs",
+    "s6.p1": "<strong>First, on the table</strong>, make four sub-assemblies of a link 4 with its triangle plates. Put E of the upper triangle plate over the E stud of link 4 and G of the lower triangle plate over the G stud, then slide a C-clip sideways into the groove of each stud.",
+    "s6.li1": "Turn the crank so that the pin points horizontally to the <strong>rear</strong>.",
+    "s6.li2": "Put B of the rear leg's link 3 over the rear stud of the side plate, and C of its link 1 over the crank pin.",
+    "s6.li3": "Stack the triangle sub-assembly on top. The upper triangle plate goes on B and D, the lower one on F.",
+    "s6.li4": "Fit C-clips into the grooves of the B and D studs.",
+    "s6.li5": "Put the front leg's link 3 over the front stud of the side plate, and its link 1 over the pin.",
+    "s6.li6": "Put the rear leg's link 2 over F and the pin, then fit a C-clip on F.",
+    "s6.li7": "Stack the front leg's triangle sub-assembly and fit C-clips on B and D.",
+    "s6.li8": "Put the front leg's link 2 over F and the pin, then fit a C-clip on F.",
+    "s6.li9": "Finally, fit a C-clip into the groove at the tip of the pin.",
+    "s6.chip1": "Links 1–4 <b>×2 each</b>", "s6.chip2": "Triangle plates <b>upper and lower, ×2 each</b>", "s6.chip3": "C-clips <b>×11</b>",
+    "s6.small": "<strong>The engravings light up</strong> on the leg you are building. Join matching letters.",
+    "s6.tip": "<strong>The studs and holes are all round, so nothing needs aligning.</strong> Just stack the parts and fit the clips. On the front leg the parts sit one layer further out, and its lower triangle plate goes on <strong>flipped over</strong>, with the wide part of the foot facing inward.",
+
+    "s7.eyebrow": "Step 7 / 8",
+    "s7.h": "Build the two left legs",
+    "s7.p1": "The procedure is the same as on the right, but <strong>front and rear are swapped</strong>. On the left, start with the front leg.",
+    "s7.li1": "Turn the crank so that the left pin points horizontally to the <strong>front</strong>.",
+    "s7.li2": "Put B of the front leg's link 3 over the front stud of the side plate, and C of its link 1 over the crank pin.",
+    "s7.li3": "Stack the triangle sub-assembly on top (B, D, F).",
+    "s7.li4": "Fit C-clips into the grooves of the B and D studs.",
+    "s7.li5": "Put the rear leg's link 3 over the rear stud of the side plate, and its link 1 over the pin.",
+    "s7.li6": "Put the front leg's link 2 over F and the pin, then fit a C-clip on F.",
+    "s7.li7": "Stack the rear leg's triangle sub-assembly and fit C-clips on B and D.",
+    "s7.li8": "Put the rear leg's link 2 over F and the pin, then fit a C-clip on F.",
+    "s7.li9": "Finally, fit a C-clip into the groove at the tip of the pin.",
+    "s7.chip1": "Links 1–4 <b>×2 each</b>", "s7.chip2": "Triangle plates <b>upper and lower, ×2 each</b>", "s7.chip3": "C-clips <b>×11</b>",
+    "s7.tip": "On the left side it is the <strong>rear leg</strong> that sits one layer further out, and the rear leg's lower triangle plate is the one that goes on flipped over. The left pin points the opposite way from the right pin.",
+
+    "s8.eyebrow": "Step 8 / 8",
+    "s8.h": "Set Stack-chan on top",
+    "s8.p1": "Seat the base in the recess of the socket frame and put the head between the left and right pads. It just sits there, with no fastening needed. To charge it, simply lift it off.",
+    "s8.chip1": "Stack-chan (M5Stack product version) <b>×1</b>",
+    "s8.tip": "Held between the pads, the head cannot turn left or right, but it can still nod up and down.",
+
+    "walk.eyebrow": "Finished",
+    "walk.h": "Turn the neck and it starts walking",
+    "walk.p1": "The neck-pan (yaw) servo is driven in continuous rotation. The head cannot turn, so the base and the gear turn instead, and the four legs move.",
+    "walk.li1": "Flash the firmware (see <code>firmware/README.md</code> in the repository for how).",
+    "walk.li2": "Scan the QR code on the screen with your phone and set up your home Wi-Fi.",
+    "walk.li3": "Once it is connected, a QR code for the control page appears. Scan it to open the control page in your phone's browser.",
+    "walk.li4": "It walks only while you hold 前進 (forward) or 後退 (back). Release to stop.",
+    "walk.small": "Touch the top of the head and let go to show the control page QR code again.",
+    "walk.tip": "On a flat table, keep the <strong>speed at 60% or below</strong> (<span id='fact-speed'>about 3 cm/s</span> in simulation). The base keeps turning while it walks, so unplug the USB cable.",
+  },
+  zh: {
+    "title": "Stackchan Strider 组装指南",
+    "fact.parts": "{n} 个", "fact.speed": "约每秒 {n} 厘米", "flip": "翻面",
+    "preset.design": "设计配色", "preset.gbw": "灰 / 蓝 / 白",
+    "aria.stage": "组装过程的 3D 动画", "aria.lang": "语言", "aria.colors": "显示的颜色",
+    "stage.drag": "横向拖动可旋转",
+    "stage.fail": "无法启动 3D 显示。请使用支持 WebGL 的浏览器打开。步骤的文字说明仍可正常阅读。",
+    "label.top": "完成", "label.step-parts": "零件", "label.step-1": "步骤 1", "label.step-2": "步骤 2", "label.step-3": "步骤 3", "label.step-4": "步骤 4",
+    "label.step-5": "步骤 5", "label.step-6": "步骤 6", "label.step-7": "步骤 7", "label.step-8": "步骤 8", "label.step-walk": "行走",
+
+    "hero.eyebrow": "组装指南",
+    "hero.lead": "只靠 Stack-chan 的一个摇头舵机就能行走的 3D 打印四足底座。不用螺丝，也不用胶水，零件全部卡入即可完成组装。",
+    "hero.k1": "打印零件", "hero.k2": "工具和螺丝", "hero.v1": "不需要", "hero.k3": "打印时间参考", "hero.v2": "5 小时 16 分钟", "hero.k4": "耗材",
+    "hero.cue": "向下滚动，开始组装",
+
+    "parts.eyebrow": "准备",
+    "parts.h": "把零件分成 3 种颜色打印",
+    "parts.p1": "打印数据共 3 个打印板。全部无需支撑，按颜色更换耗材打印。",
+    "parts.th1": "打印板", "parts.th2": "数量", "parts.th3": "用量", "parts.th4": "时间",
+    "parts.td1": "Frame（骨架）", "parts.td2": "Accent（主角）", "parts.td3": "Links（连接件）",
+    "parts.p2": "腿部零件上有刻字。<strong>数字是连杆编号，字母是连接位置</strong>。把相同字母的位置连在一起，就能组装完成。",
+    "parts.v1": "两端为 C 和 D", "parts.v2": "两端为 C 和 F", "parts.v3": "两端为 B 和 F", "parts.v4": "两端为 E 和 G",
+    "parts.v5": "上三角板的 3 个孔",
+    "parts.v6": "下三角板的 2 个孔（没有刻字的角是脚尖）",
+
+    "s1.eyebrow": "步骤 1 / 8",
+    "s1.h": "在底板上安装小齿轮和左侧板",
+    "s1.li1": "把小齿轮带齿一侧伸出的长筒，从内侧穿过侧板的圆孔。",
+    "s1.li2": "把底板左侧的 2 个榫头压入侧板的方孔，直到“咔哒”一声卡住。",
+    "s1.chip1": "底板 <b>×1</b>", "s1.chip2": "小齿轮 <b>×1</b>", "s1.chip3": "侧板 <b>×1</b>",
+    "s1.tip": "左右侧板是同一种零件。安装时让<strong>凸柱朝外</strong>。",
+
+    "s2.eyebrow": "步骤 2 / 8",
+    "s2.h": "安装右侧板和套筒",
+    "s2.li1": "把右侧板压入底板右侧的榫头。",
+    "s2.li2": "把短套筒从外侧插入右侧板的圆孔。",
+    "s2.chip1": "侧板 <b>×1</b>", "s2.chip2": "套筒 <b>×1</b>",
+
+    "s3.eyebrow": "步骤 3 / 8",
+    "s3.h": "穿入轴，装上曲柄",
+    "s3.li1": "从右侧插入六角轴，穿过套筒和小齿轮。",
+    "s3.li2": "在轴的两端各插上一个曲柄。",
+    "s3.chip1": "六角轴 <b>×1</b>", "s3.chip2": "曲柄 <b>×2</b>",
+    "s3.tip": "<strong>左右曲柄的销必须朝相反方向（180°）</strong>。方向相同就无法行走。",
+
+    "s4.eyebrow": "步骤 4 / 8",
+    "s4.h": "放上转盘齿轮和底座框",
+    "s4.li1": "让齿轮的齿朝下，把中央的轴放入底板的圆形凸台。",
+    "s4.li2": "把底座框的 3 个卡爪对准齿轮圆盘上的方孔，放上去。",
+    "s4.chip1": "转盘齿轮 <b>×1</b>", "s4.chip2": "底座框 <b>×1</b>",
+    "s4.tip": "用手转动圆盘，如果曲柄跟着转动，说明齿轮已经啮合。",
+
+    "s5.eyebrow": "步骤 5 / 8",
+    "s5.h": "盖上轭架",
+    "s5.p1": "把轭架从上方盖下，压到侧板的 4 根立柱上，直到“咔哒”一声卡住。环内侧的倒钩会压住齿轮，防止它浮起。",
+    "s5.chip1": "轭架 <b>×1</b>",
+    "s5.tip": "左右竖起的圆形垫块，之后会夹住 Stack-chan 的头部。",
+
+    "s6.eyebrow": "步骤 6 / 8",
+    "s6.h": "组装右侧的 2 条腿",
+    "s6.p1": "<strong>先在桌面上</strong>做好 4 组“连杆 4 加三角板”的组件。把上三角板的 E 套在连杆 4 的 E 凸柱上，把下三角板的 G 套在 G 凸柱上，然后分别从侧面把 C 形卡环卡入凸柱的槽里。",
+    "s6.li1": "转动曲柄，让销水平朝向<strong>后方</strong>。",
+    "s6.li2": "把后腿连杆 3 的 B 套在侧板后方的凸柱上，把连杆 1 的 C 套在曲柄销上。",
+    "s6.li3": "叠上三角板组件。上三角板套在 B 和 D 上，下三角板套在 F 上。",
+    "s6.li4": "在 B 和 D 凸柱的槽里卡上 C 形卡环。",
+    "s6.li5": "把前腿的连杆 3 套在侧板前方的凸柱上，把连杆 1 套在销上。",
+    "s6.li6": "把后腿的连杆 2 套在 F 和销上，并在 F 上卡上 C 形卡环。",
+    "s6.li7": "叠上前腿的三角板组件，在 B 和 D 上卡上 C 形卡环。",
+    "s6.li8": "把前腿的连杆 2 套在 F 和销上，并在 F 上卡上 C 形卡环。",
+    "s6.li9": "最后，在销顶端的槽里卡上 C 形卡环。",
+    "s6.chip1": "连杆 1～4 <b>各×2</b>", "s6.chip2": "三角板 <b>上下各×2</b>", "s6.chip3": "C 形卡环 <b>×11</b>",
+    "s6.small": "正在组装的那条腿的<strong>刻字会发光</strong>。把相同的字母连在一起。",
+    "s6.tip": "<strong>凸柱和孔都是圆的，不需要对准方向。</strong>叠上去，再卡上卡环即可。前腿的零件要靠外一层安装，下三角板要<strong>翻面</strong>，让脚尖较宽的部分朝内。",
+
+    "s7.eyebrow": "步骤 7 / 8",
+    "s7.h": "组装左侧的 2 条腿",
+    "s7.p1": "方法与右侧相同，但<strong>前后顺序相反</strong>。左侧从前腿开始组装。",
+    "s7.li1": "转动曲柄，让左侧的销水平朝向<strong>前方</strong>。",
+    "s7.li2": "把前腿连杆 3 的 B 套在侧板前方的凸柱上，把连杆 1 的 C 套在曲柄销上。",
+    "s7.li3": "叠上三角板组件（B、D、F）。",
+    "s7.li4": "在 B 和 D 凸柱的槽里卡上 C 形卡环。",
+    "s7.li5": "把后腿的连杆 3 套在侧板后方的凸柱上，把连杆 1 套在销上。",
+    "s7.li6": "把前腿的连杆 2 套在 F 和销上，并在 F 上卡上 C 形卡环。",
+    "s7.li7": "叠上后腿的三角板组件，在 B 和 D 上卡上 C 形卡环。",
+    "s7.li8": "把后腿的连杆 2 套在 F 和销上，并在 F 上卡上 C 形卡环。",
+    "s7.li9": "最后，在销顶端的槽里卡上 C 形卡环。",
+    "s7.chip1": "连杆 1～4 <b>各×2</b>", "s7.chip2": "三角板 <b>上下各×2</b>", "s7.chip3": "C 形卡环 <b>×11</b>",
+    "s7.tip": "在左侧，靠外一层安装的是<strong>后腿</strong>，下三角板需要翻面的也是后腿。左侧的销与右侧的销方向相反。",
+
+    "s8.eyebrow": "步骤 8 / 8",
+    "s8.h": "放上 Stack-chan",
+    "s8.p1": "把 Stack-chan 的底座嵌入底座框的凹槽，把头部放进左右垫块之间。放上去即可，无需固定。充电时直接拿起来取下。",
+    "s8.chip1": "Stack-chan（M5Stack 成品版）<b>×1</b>",
+    "s8.tip": "头部被垫块夹住，无法左右转动，但可以上下点头。",
+
+    "walk.eyebrow": "完成",
+    "walk.h": "一转头，就迈步",
+    "walk.p1": "让摇头（偏航）舵机连续旋转。头部无法转动，于是底座和齿轮转动起来，带动 4 条腿。",
+    "walk.li1": "烧录固件（方法见仓库中的 <code>firmware/README.md</code>）。",
+    "walk.li2": "用手机扫描屏幕上显示的二维码，设置家里的 Wi-Fi。",
+    "walk.li3": "连接成功后会显示操作页面的二维码。扫描后，手机浏览器会打开操作页面。",
+    "walk.li4": "只有按住“前進”（前进）或“後退”（后退）时才会行走，松开即停止。",
+    "walk.small": "触摸头顶再松开，可以再次显示操作页面的二维码。",
+    "walk.tip": "请在平坦的桌面上使用，<strong>速度以 6 成以下</strong>为宜（模拟结果为<span id='fact-speed'>约每秒 3 厘米</span>）。行走时底座会一直旋转，请拔掉 USB 线。",
+  },
+};
+</script>
 <script>
 (function () {
   "use strict";
@@ -312,9 +547,6 @@ ol.do li.current { color: var(--signal); font-weight: 700; }
   const smooth = (v) => { const t = clamp(v); return t * t * (3 - 2 * t); };
   const easeOut = (v) => 1 - Math.pow(1 - clamp(v), 3);
   const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-
-  $("fact-parts").textContent = DATA.bom.total + " 個";
-  if (DATA.walk) $("fact-speed").textContent = "毎秒 約 " + (DATA.walk.speed / 10).toFixed(0) + " cm";
 
   // 手順の並び(ページ上の section と同じ順)。HERO と PARTS のあとが組立、最後が歩行
   const sections = Array.from(document.querySelectorAll(".step"));
@@ -359,16 +591,19 @@ ol.do li.current { color: var(--signal); font-weight: 700; }
 
   // ---------------------------------------------------------------- 色の切り替え
   const PRESETS = [
-    ["設計の色", DATA.roles.chassis, DATA.roles.accent, DATA.roles.link],
-    ["グレー・ブルー・ホワイト", "#cccccc", "#2a86ea", "#fcfcfc"],
+    ["preset.design", DATA.roles.chassis, DATA.roles.accent, DATA.roles.link],
+    ["preset.gbw", "#cccccc", "#2a86ea", "#fcfcfc"],
   ];
+  const presetLabels = [];
   let paintAll = () => {};
   PRESETS.forEach((preset, index) => {
     const stripes = document.createElement("i");
     preset.slice(1).forEach((hex) => { const u = document.createElement("u"); u.style.background = hex; stripes.appendChild(u); });
     const button = document.createElement("button");
     button.className = "swatch-btn"; button.id = "color-" + index; button.setAttribute("aria-pressed", String(index === 0));
-    button.appendChild(stripes); button.appendChild(document.createTextNode(preset[0]));
+    const label = document.createElement("span");
+    presetLabels.push(label);
+    button.appendChild(stripes); button.appendChild(label);
     button.addEventListener("click", () => {
       state.colors = { chassis: preset[1], accent: preset[2], link: preset[3] };
       document.querySelectorAll(".swatch-btn").forEach((other) => other.setAttribute("aria-pressed", String(other === button)));
@@ -377,6 +612,57 @@ ol.do li.current { color: var(--signal); font-weight: 700; }
     });
     $("swatches").appendChild(button);
   });
+
+  // ---------------------------------------------------------------- 言語の切り替え
+  // 日本語は HTML に書いてある文をそのまま原文として使い、英語・中国語は GUIDE_I18N から同じキーで引く
+  const LANGS = { ja: "ja", en: "en", zh: "zh-Hans" };  // 言語 → html の lang 属性
+  const textNodes = Array.from(document.querySelectorAll("[data-i18n]"));
+  const ariaNodes = Array.from(document.querySelectorAll("[data-i18n-aria]"));
+  const langButtons = Array.from(document.querySelectorAll("#lang button"));
+  const flipLabels = [];
+  const TEXT = { ja: Object.assign({ title: document.title }, GUIDE_I18N.ja), en: GUIDE_I18N.en, zh: GUIDE_I18N.zh };
+  textNodes.forEach((node) => { TEXT.ja[node.dataset.i18n] = node.innerHTML; });
+  ariaNodes.forEach((node) => { TEXT.ja[node.dataset.i18nAria] = node.getAttribute("aria-label"); });
+  sections.forEach((section) => { TEXT.ja["label." + section.id] = section.dataset.label; });
+  // 訳の抜けは、黙って日本語に戻さずにここで止める
+  Object.keys(LANGS).forEach((code) => Object.keys(TEXT.ja).forEach((key) => {
+    if (typeof TEXT[code][key] !== "string") throw new Error("guide i18n: 訳がありません " + code + " / " + key);
+  }));
+  let lang = "ja";
+  const t = (key) => TEXT[lang][key];
+  function setLang(code) {
+    // 文の長さが変わるとカードの高さも変わるので、いま見ている手順が画面の同じ位置に残るようにスクロールを合わせる
+    const anchor = sections[state.step], before = anchor.getBoundingClientRect().top;
+    lang = code;
+    document.documentElement.lang = LANGS[code];
+    document.title = t("title");
+    textNodes.forEach((node) => { node.innerHTML = t(node.dataset.i18n); });
+    ariaNodes.forEach((node) => { node.setAttribute("aria-label", t(node.dataset.i18nAria)); });
+    sections.forEach((section) => { section.dataset.label = t("label." + section.id); });
+    presetLabels.forEach((label, index) => { label.textContent = t(PRESETS[index][0]); });
+    flipLabels.forEach((el) => { el.textContent = t("flip"); });
+    $("fact-parts").textContent = t("fact.parts").replace("{n}", DATA.bom.total);
+    if (DATA.walk) $("fact-speed").textContent = t("fact.speed").replace("{n}", (DATA.walk.speed / 10).toFixed(0));
+    langButtons.forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.lang === code)));
+    window.scrollBy(0, anchor.getBoundingClientRect().top - before);
+    readScroll();
+  }
+  // はじめの言語: URL の ?lang= があればそれ、なければブラウザの言語設定の順に見て、対応している最初のもの。どれも無ければ英語
+  function initialLang() {
+    const codes = Object.keys(LANGS);
+    const asked = new URLSearchParams(location.search).get("lang");
+    if (codes.indexOf(asked) >= 0) return asked;
+    const wanted = (navigator.languages || [navigator.language]).map((tag) => tag.toLowerCase().split("-")[0]).find((code) => codes.indexOf(code) >= 0);
+    return wanted || "en";
+  }
+  langButtons.forEach((button) => button.addEventListener("click", () => {
+    setLang(button.dataset.lang);
+    // 選んだ言語を URL に残す(再読み込みしても、リンクを人に渡しても同じ言語で開く)
+    const url = new URL(location.href);
+    url.searchParams.set("lang", lang);
+    history.replaceState(null, "", url);
+  }));
+  setLang(initialLang());
 
   // ---------------------------------------------------------------- 3D
   window.addEventListener("scroll", readScroll, { passive: true });
@@ -492,8 +778,9 @@ ol.do li.current { color: var(--signal); font-weight: 700; }
     if (item.leg && DATA.legPlan.flipped.indexOf(item.leg) >= 0 && /^tri_/.test(item.inst.part)) {
       const el = document.createElement("div");
       el.className = "flip-label";
-      el.textContent = "裏返す";
+      el.textContent = t("flip");
       el.hidden = true;
+      flipLabels.push(el);
       $("flip-labels").appendChild(el);
       const g = geometries[item.inst.part];
       g.computeBoundingBox();
