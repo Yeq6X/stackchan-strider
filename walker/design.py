@@ -75,6 +75,12 @@ SHAFT_AF = 8.0  # 六角シャフト二面幅(呼び寸法。穴はこれ + SHAF
 SHAFT_BORE_CLEARANCE = 0.3  # 六角穴の広げ量(二面幅)
 SHAFT_UNDERSIZE = 0.2  # シャフト本体を呼び寸法より細くする量(二面幅)。穴との差は合計 0.5
 CRANK_SOCKET_CLEARANCE = 0.25  # クランクの六角の止まり穴とシャフトの二面幅の差。浅い穴で抜け止めが無いので、通し穴(差 0.5)より詰める
+CRANK_SOCKET_DEPTH = 3.0  # クランクの六角の止まり穴の深さ
+# 左右のクランクを、ピンが 180° 反対になる向きでしか差せないようにする合わせ:
+# シャフトの両端で、六角の角を 1 つずつ(右端と左端で反対側の角を)平らに落とし、クランクの穴は、ピンの側の角を埋める。
+# シャフトの中ほどは六角のままなので、ピニオンとスリーブの穴はそのまま通る
+KEY_CUT = 1.2  # シャフトの角を落とす量(角の先から)
+KEY_LENGTH = CRANK_SOCKET_DEPTH + 0.5  # シャフトの端から、角を落とす長さ(穴の深さより少し長く)
 SLEEVE_R = 6.0
 DECK_Z0, DECK_Z1 = 6.5, 9.5
 HUB_Z0 = 15.6  # ターンテーブル歯車のハブ(歯の内側の筒)の下端
@@ -485,8 +491,18 @@ PINION_FRONT = 12.5
 # ---------------------------------------------------------------- 駆動軸まわり
 @lru_cache(maxsize=None)
 def shaft_part() -> Manifold:
-    half = L0 + 3.0 - 0.1
-    return apply(hexagon(SHAFT_AF - SHAFT_UNDERSIZE).extrude(2 * half), AXIS_Z_TO_X).translate((-half, 0, 0))
+    half = L0 + CRANK_SOCKET_DEPTH - 0.1
+    shaft = apply(hexagon(SHAFT_AF - SHAFT_UNDERSIZE).extrude(2 * half), AXIS_Z_TO_X).translate((-half, 0, 0))
+    # 角は ±Y を向いている。右端は +Y の角、左端は −Y の角を落とす(クランクのピンの向きが左右で 180° 違うため)
+    flat = _key_flat(SHAFT_AF - SHAFT_UNDERSIZE)
+    shaft -= box(half - KEY_LENGTH, half + 1, flat, flat + 5, -6, 6)
+    shaft -= box(-half - 1, -half + KEY_LENGTH, -flat - 5, -flat, -6, 6)
+    return shaft
+
+
+def _key_flat(across_flats: float) -> float:
+    """合わせの平らな面の位置(軸からの距離)。六角の角の先から KEY_CUT だけ内側。"""
+    return across_flats / math.sqrt(3) - KEY_CUT
 
 
 def _sleeve(x0: float, x1: float) -> Manifold:
@@ -508,7 +524,9 @@ def crank_part() -> Manifold:
     """クランク(ローカル: 軸 = X、内面 x=0、ピンは +Y 方向へ偏心)。六角の止まり穴でシャフトに差す。"""
     radius = LEG.m
     disc = hull2(circle(CRANK_R), circle(STUD_R + 3.0, radius, 0)).extrude(CRANK_T)
-    socket = hexagon(SHAFT_AF - SHAFT_UNDERSIZE + CRANK_SOCKET_CLEARANCE).extrude(3.0)
+    # 穴は、ピンの側(スケッチの +X)の角を埋める。シャフトの落とした角とだけ合う
+    key = _key_flat(SHAFT_AF - SHAFT_UNDERSIZE) + CRANK_SOCKET_CLEARANCE / 2
+    socket = (hexagon(SHAFT_AF - SHAFT_UNDERSIZE + CRANK_SOCKET_CLEARANCE) - rect(key, key + 5, -6, 6)).extrude(CRANK_SOCKET_DEPTH)
     pin = grooved_pin(CRANK_T, PIN_CLEAR).translate((radius, 0, 0))
     return apply(disc - socket + pin, AXIS_Z_TO_X)
 
