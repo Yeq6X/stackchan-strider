@@ -64,6 +64,9 @@ details .card{margin-top:10px}
 <details>
   <summary>設定</summary>
   <div class="card">
+    <button id="calib">旋回の調整をする</button>
+    <p class="note" id="calib-note">左右に回れるようにするための調整です。平らな床に置いて押すと、8 秒ほど前に歩いて、同じだけ戻ります(前に 60 cm ほど空けてください)。歩行ベースを組んだあとに 1 回やれば、本体に保存されます。組み直したときは、やり直してください。</p>
+    <button id="uncalib" hidden>旋回の調整を消す</button>
     <label style="color:var(--ink)">歩く速さの上限 <output id="limit-out"></output>
       <input type="range" id="limit" min="20" max="100" step="10" value="80"></label>
     <p class="note">つまみを端まで動かしたときの速さです。旋回の強さは変わりません。本体に保存されます。</p>
@@ -77,14 +80,20 @@ details .card{margin-top:10px}
 </main>
 <script>
 const $ = (id) => document.getElementById(id);
-let pitch = 10, held = false, timer = null, stickX = 0, stickY = 0, sending = false, dirty = false;
+let calibrating = false, pitch = 10, held = false, timer = null, stickX = 0, stickY = 0, sending = false, dirty = false;
 const call = (path) => fetch(path, { cache: "no-store" }).then((r) => r.json());
 const names = { "0": "停止中", "1": "前進中", "-1": "後退中", "2": "右に旋回中", "-2": "左に旋回中" };
 function show(s) {
   $("invert").checked = !!s.invert;
   $("smile").checked = !!s.smile;
   if (document.activeElement !== $("limit")) { $("limit").value = s.limit; $("limit-out").textContent = s.limit + "%"; }
-  $("state").textContent = names[s.drive] + " / 電池 " + s.volt.toFixed(2) + " V" + (s.lost ? " / 旋回のやり直し " + s.lost + " 回" : "");
+  const calib = ["旋回は未調整(設定で調整してください)", "旋回の調整中…", "", "旋回の調整に失敗しました。平らな床でやり直してください"][s.calib];
+  $("state").textContent = (s.calib === 1 ? "" : names[s.drive] + " / ") + "電池 " + s.volt.toFixed(2) + " V" + (calib ? " / " + calib : "");
+  $("calib").textContent = s.calib === 1 ? "調整をやめる" : s.center >= 0 ? "旋回の調整をやり直す" : "旋回の調整をする";
+  calibrating = s.calib === 1;
+  // 調整を消すボタンは、調整が済んでいて、調整中でないときだけ出す
+  $("uncalib").hidden = s.center < 0 || calibrating;
+  if ($("uncalib").hidden) { delete $("uncalib").dataset.armed; $("uncalib").textContent = "旋回の調整を消す"; }
 }
 function lost() { $("state").textContent = "スタックチャンと通信できません。本体の頭の上をさわると画面に QR が出るので、読み直してください"; }
 // スティックの倒れを送る。前の送信の返事を待ってから次を送る(たまった古い指令が、あとから届かないようにする)
@@ -158,6 +167,13 @@ function look(delta) {
 $("down").onclick = () => look(-10);
 $("up").onclick = () => look(10);
 $("invert").onchange = () => call("/api/invert?on=" + ($("invert").checked ? 1 : 0)).then(show).catch(lost);
+$("calib").onclick = () => call(calibrating ? "/api/stop" : "/api/calibrate").then(show).catch(lost);
+$("uncalib").onclick = () => {
+  if ($("uncalib").dataset.armed) call("/api/uncalibrate").then(show).catch(lost);
+  else { $("uncalib").dataset.armed = "1"; $("uncalib").textContent = "もう一度押すと、旋回の調整を消します"; }
+};
+// 調整の間は、終わったかどうかを 1 秒ごとに確かめる
+setInterval(() => { if (calibrating && !held) call("/api/state").then(show).catch(lost); }, 1000);
 $("limit").oninput = () => { $("limit-out").textContent = $("limit").value + "%"; };
 $("limit").onchange = () => call("/api/limit?v=" + $("limit").value).then(show).catch(lost);
 $("smile").onchange = () => call("/api/smile?on=" + ($("smile").checked ? 1 : 0)).then(show).catch(lost);

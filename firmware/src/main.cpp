@@ -25,6 +25,8 @@
 #include <WebServer.h>
 #include <WiFi.h>
 #include <atomic>
+#include <cmath>
+#include <mutex>
 #include <drivers/FTServo_Arduino/src/SCSCL.h>
 
 #include "pages.h"
@@ -45,27 +47,31 @@ constexpr int PITCH_SPEED = 400;  // うなずきの速さ [生の位置/秒]。
 constexpr uint32_t PITCH_RELEASE_MS = 1500;  // うなずきの指令からこの時間たったら脱力する(公式ライブラリは、止まると脱力する)
 
 // 旋回(2026-11-20 に実機で確かめた往復。firmware/README.md の「試験用のファームウェア」)。
-// 首を全開で往復させる。どちらに回るかは往復の中心で決まる。首のサーボは、出力が正のとき位置の値が減る。
-// 生の位置 1022 と 3 の間(1 周の約 1 割)は位置が読めず、330〜415 前後などのでたらめな値が返る。端では 3 か 1022 が返る
+// 首を全開で、中心 ± TURN_HALF の間で往復させる。どちらに回るかは、往復の中心(脚の位相)で決まる。
+// 中心は機体の組み方(傘歯車のかみ合う歯、クランクを差す向き)で変わるので、「旋回の調整」で機体ごとに求めて保存する。
+// 位置の目盛りは首のサーボの生の位置と同じで、1 周が CIRCLE。生の位置 1022 と 3 の間(1 周の約 1 割)は位置が読めず、
+// 330〜415 前後などのでたらめな値が返る(端では 3 か 1022 が返る)。首のサーボは、出力が正のとき位置の値が減る。
 constexpr int TURN_DUTY = 1000;
-// 上から見て時計回り: 生の位置がこの 2 つを越えるたびに折り返す
-constexpr int CW_LOW = 524, CW_HIGH = 812;
-// 上から見て反時計回り: 往復が読めない区間をまたぐ。位置が増える向きは、読めない区間を抜けたのを見てから
-// CCW_HIGH を下から越えたら折り返す。位置が減る向きは、読めない区間に入る手前(CCW_SYNC を下向きに通過)から
-// CCW_DELAY_MS たったら折り返す
-constexpr int CCW_HIGH = 260, CCW_SYNC = 40;
-constexpr uint32_t CCW_DELAY_MS = 80;
-constexpr int POS_STEP_MAX = 100;  // 続けて読んだ位置の差がこれより大きければ、読めない区間の値とみなす(全開で 1 回に約 26)
-constexpr uint32_t CCW_DOWN_LIMIT_MS = 900;  // 位置が減る向きで、手前の通過を見ないままこの時間たったら折り返す
-constexpr uint32_t CCW_BACK_LIMIT_MS = 1500;  // 位置が増える向きで、この時間たっても上端を越えなければ、やり直す
-constexpr uint32_t CCW_SEEK_LIMIT_MS = 4000;
-// 反時計回りを始めるとき、首がこの位置より上にあれば、位置が増える向きに回して読めない区間を抜けてから往復に入る
-// (位置が減る向きに上端まで戻すより近い)。往復の読めない区間側の折り返しは、区間の向こう側の位置 1000 付近にあたり、
-// そこまでの距離(1000 − 位置)と、上端までの距離(位置 − CCW_HIGH)が等しくなるのが 630
-constexpr int CCW_UP_FROM = 630;
-// 読めない区間にいるかの見分け。区間の端の近く(GAP_NEAR_LOW 以下か GAP_NEAR_HIGH 以上)から、続けて読んだ値が
-// POS_STEP_MAX 以上飛んだら、区間に入ったとみなす。端の値(GAP_EDGE_LOW 以下か GAP_EDGE_HIGH 以上)を読んだら、出たとみなす
-constexpr int GAP_NEAR_LOW = 30, GAP_NEAR_HIGH = 1000, GAP_EDGE_LOW = 10, GAP_EDGE_HIGH = 1015;
+constexpr int TURN_HALF = 144;  // 往復の半幅(45°)。折り返しの指令から止まるまでに行き過ぎるので、実際の振れはもっと大きい
+constexpr double CIRCLE = 1152.0;  // 1 周(1 = 0.3125°)
+// 首の位置の見積もり。読めた位置が直前の見積もりとつじつまが合えばその値を使い、合わなければ(読めない区間)、
+// 出力から決めた速さで進める。読めない区間を抜けた直後の値で合わせ直す
+constexpr double EST_VMAX = 1400.0;  // 全開で回り続けたときの速さの仮定 [位置/秒]
+constexpr double EST_TAU = 0.07;  // 出力を変えてから速さが変わるまでの時定数の仮定 [秒]
+constexpr double EST_TOL = 120.0;  // 読めた位置と見積もりの差がこれより小さければ、読めた位置を使う
+constexpr int EST_MISS_MAX = 10;  // 読める場所にいるはずなのに、これだけ続けて食い違ったら、読めた位置に合わせ直す
+// 旋回の調整: 出力 CALIB_DUTY で CALIB_WALK_MS 歩かせ、機体の揺れ(ジャイロ)を首の位置 θ(1 周 = 2π)の関数
+// a0 + a1·cosθ + b1·sinθ + a2·cos2θ + b2·sin2θ に最小二乗で当てはめて、脚の位相を求める。そのあと同じ時間、歩いて戻る。
+// 前後の傾き(IMU の x 軸まわり)は 1 周に 2 回の成分が強く、山の位置が安定している(半周ずれた 2 つの候補が残る)。
+// 鉛直まわり(y 軸)は 1 周に 1 回の成分が強いが、山の位置が速さで動くので、2 つの候補のどちらかを選ぶのにだけ使う。
+// 基準は、旋回の中心を実機で探してあった機体(2026-11-20)を、同じ出力で歩かせたときの値
+constexpr int CALIB_DUTY = 600;
+constexpr uint32_t CALIB_WALK_MS = 8000;
+constexpr uint32_t CALIB_SKIP_MS = 600;  // 歩き始めてから、この時間は使わない
+constexpr int CALIB_MIN_SAMPLES = 200;
+constexpr double REF_PITCH2 = 418.0;  // x 軸の 2 回成分の山の位置(0〜575)
+constexpr double REF_YAW1 = 246.0;  // y 軸の 1 回成分の山の位置(0〜1151)
+constexpr double REF_CW_CENTER = 668.0;  // 上から見て時計回りに回る往復の中心
 constexpr uint32_t COMMAND_TIMEOUT_MS = 900;  // スマホからの合図(0.3 秒ごと)がこの時間途切れたら止める
 constexpr uint32_t CONNECT_TIMEOUT_MS = 20000;  // 家の Wi-Fi への接続を待つ時間
 constexpr uint32_t QR_SHOW_MS = 15000;  // 操作ページの QR を出しておく時間
@@ -90,13 +96,18 @@ bool invertDirection = false;
 bool smileWhileWalking = false;  // 歩いている間は笑顔にするか(設定で切り替える。初期状態は変えない)
 int speedLimit = SPEED_LIMIT_DEFAULT;  // 歩く速さの上限 [%](設定で変える)
 // 動き。操作ページからの指令で loop が決め、driveTask がサーボに伝える
-enum class Drive { Stop, Walk, TurnRight, TurnLeft };  // TurnRight = 上から見て時計回り
+enum class Drive { Stop, Walk, TurnRight, TurnLeft, Calibrate };  // TurnRight = 上から見て時計回り
+enum class Calib { None, Running, Done, Failed };  // 旋回の調整の状態
 std::atomic<Drive> driveMode{Drive::Stop};
 std::atomic<int> walkDuty{0};  // 歩くときの首の出力(-1000〜1000。向きの入れ替えも済ませた値)
 std::atomic<int> pitchRequest{-1};  // 0 以上なら、うなずきの目標(生の位置)。driveTask が送ったら -1 に戻す
-std::atomic<uint32_t> turnLostCount{0};  // 反時計回りの旋回で、上端を見失ってやり直した回数(操作ページに出す)
 std::atomic<int> yawPos{-1};  // 最後に読んだ首の生の位置(-1 = 読めなかった)。/api/state に出す(調べるとき用)
-std::atomic<bool> yawInGap{false};  // 首が、位置の読めない区間にいるとみなしているか
+std::atomic<int> turnCenter{-1};  // 時計回りに回る往復の中心(0〜1151)。-1 = まだ調整していない。反時計回りは半周先
+std::atomic<Calib> calibState{Calib::None};
+std::atomic<bool> turnCenterDirty{false};  // 調整で中心が決まった。loop が本体に保存する
+std::mutex i2cMutex;  // ジャイロ(別タスク)と、タッチ・電池の電圧(loop)が、同じ I2C を使う
+portMUX_TYPE gyroMux = portMUX_INITIALIZER_UNLOCKED;
+double gyroAngle[2] = {0, 0};  // ジャイロを積算した角度 [°](x 軸、y 軸)
 int stickX = 0, stickY = 0;  // 操作ページのスティックの倒れ(-100〜100。右と上が正)
 int pitchZero = PITCH_ZERO_DEFAULT;
 SCSCL servoBus;
@@ -108,27 +119,111 @@ uint32_t confirmUntilMs = 0;  // 0 以外なら、この時刻まで「つなぎ
 bool avatarRunning = false;
 
 // ---------------------------------------------------------------- 歩行と旋回
+// ジャイロの積算(5 ms ごと)。旋回の調整で、機体の揺れの速さを求めるのに使う
+void gyroTask(void*) {
+    int64_t last = esp_timer_get_time();
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(5));
+        m5::imu_data_t data;
+        {
+            std::lock_guard<std::mutex> lock(i2cMutex);
+            if (!M5.Imu.update()) {
+                continue;
+            }
+            data = M5.Imu.getImuData();
+        }
+        const int64_t now = esp_timer_get_time();
+        const double dt = (now - last) / 1e6;
+        last = now;
+        portENTER_CRITICAL(&gyroMux);
+        gyroAngle[0] += data.gyro.x * dt;
+        gyroAngle[1] += data.gyro.y * dt;
+        portEXIT_CRITICAL(&gyroMux);
+    }
+}
+
+// 5 元の連立方程式を解く(部分ピボットつきの消去法)。解けなければ false
+bool solve5(double a[5][5], double b[5], double x[5]) {
+    for (int col = 0; col < 5; col++) {
+        int pivot = col;
+        for (int row = col + 1; row < 5; row++) {
+            if (fabs(a[row][col]) > fabs(a[pivot][col])) {
+                pivot = row;
+            }
+        }
+        if (fabs(a[pivot][col]) < 1e-9) {
+            return false;
+        }
+        for (int k = 0; k < 5; k++) {
+            std::swap(a[col][k], a[pivot][k]);
+        }
+        std::swap(b[col], b[pivot]);
+        for (int row = col + 1; row < 5; row++) {
+            const double f = a[row][col] / a[col][col];
+            for (int k = col; k < 5; k++) {
+                a[row][k] -= f * a[col][k];
+            }
+            b[row] -= f * b[col];
+        }
+    }
+    for (int row = 4; row >= 0; row--) {
+        double sum = b[row];
+        for (int k = row + 1; k < 5; k++) {
+            sum -= a[row][k] * x[k];
+        }
+        x[row] = sum / a[row][row];
+    }
+    return true;
+}
+
+double wrapTo(double value, double period) {
+    return value - period * floor(value / period);
+}
+
+// 当てはめの結果から、時計回りに回る往復の中心を求める。求められなければ -1
+int centerFromFit(double atA[5][5], double atB[2][5], int count) {
+    if (count < CALIB_MIN_SAMPLES) {
+        return -1;
+    }
+    double coef[2][5];
+    for (int axis = 0; axis < 2; axis++) {
+        double a[5][5], b[5];
+        memcpy(a, atA, sizeof(a));
+        memcpy(b, atB[axis], sizeof(b));
+        if (!solve5(a, b, coef[axis])) {
+            return -1;
+        }
+    }
+    const double pitch2 = wrapTo(atan2(coef[0][4], coef[0][3]) / (2 * M_PI) * CIRCLE / 2, CIRCLE / 2);
+    const double yaw1 = wrapTo(atan2(coef[1][2], coef[1][1]) / (2 * M_PI) * CIRCLE, CIRCLE);
+    // 基準からのずれ。半周ずれた 2 つの候補から、鉛直まわりの山の位置が基準に近いほうを選ぶ
+    const double shift = wrapTo(pitch2 - REF_PITCH2, CIRCLE / 2);
+    const auto miss = [&](double candidate) { return fabs(wrapTo(yaw1 - (REF_YAW1 + candidate) + CIRCLE / 2, CIRCLE) - CIRCLE / 2); };
+    const double chosen = miss(shift) <= miss(shift + CIRCLE / 2) ? shift : shift + CIRCLE / 2;
+    return static_cast<int>(lround(wrapTo(REF_CW_CENTER + chosen, CIRCLE))) % static_cast<int>(CIRCLE);
+}
+
 // サーボと通信するのは、このタスクだけ
 void driveTask(void*) {
-    enum class Ccw { Start, Seek, Down, Back };
     int duty = 0;
     Drive current = Drive::Stop;
-    Ccw ccw = Ccw::Start;
-    uint32_t ccwSinceMs = 0, ccwSyncMs = 0, pitchReleaseAtMs = 0;
-    int ccwArmed = 0;  // 0: まだ。1: 読めない区間の端の値(位置 10 以下)を見た。2: そのあと 10〜150 の値を見た(区間を抜けた)
-    int prevPos = -1;  // 1 つ前に読めた位置(旋回を始めるたびに -1 に戻す)
-    int trackPos = -1;  // 1 つ前に読めた位置(読めない区間の見分け用。戻さない)
-    bool inGap = false;  // 首が、位置の読めない区間にいるとみなしているか
+    uint32_t pitchReleaseAtMs = 0;
+    // 首の位置の見積もり
+    bool estInit = false;
+    double est = 0, estVel = 0;  // 見積もり(巻き戻さない連続の値)と速さ
+    int64_t estUs = esp_timer_get_time();
+    int estPrevRaw = -1, estMiss = 0;
+    // 旋回の調整
+    double atA[5][5], atB[2][5];
+    int calibCount = 0, calibPrevPos = -1;
+    int64_t calibPrevUs = 0;
+    double calibPrevAngle[2] = {0, 0};
+    uint32_t calibStartMs = 0;
+    bool calibReturning = false;
+    Calib calibBefore = Calib::None;
     const auto writeDuty = [&](int value) {
         duty = constrain(value, -1000, 1000);
         servoBus.WritePWM(YAW_ID, static_cast<int16_t>(duty * 1023 / 1000));
-    };
-    const auto enterCcw = [&](Ccw next, int nextDuty) {
-        ccw = next;
-        ccwSinceMs = millis();
-        ccwSyncMs = 0;
-        ccwArmed = 0;
-        writeDuty(nextDuty);
     };
     for (;;) {
         const int pitch = pitchRequest.exchange(-1);
@@ -140,24 +235,59 @@ void driveTask(void*) {
             servoBus.EnableTorque(PITCH_ID, 0);
         }
 
-        // 首の位置は、止まっている間も歩いている間も読み続ける(1 回に約 17 ms かかる)。
-        // 旋回を始めるときに、首が読めない区間にいるかを知っておくため
+        // 首の位置は、止まっている間も歩いている間も読み続けて(1 回に約 17 ms かかる)、見積もりを進める
         const bool got = servoBus.FeedBack(YAW_ID) >= 0;
         const int pos = got ? servoBus.ReadPos(-1) : -1;
-        if (got) {
-            if (pos <= GAP_EDGE_LOW || pos >= GAP_EDGE_HIGH) {
-                inGap = false;
-            } else if (trackPos >= 0 && (trackPos <= GAP_NEAR_LOW || trackPos >= GAP_NEAR_HIGH) && abs(pos - trackPos) >= POS_STEP_MAX) {
-                inGap = true;
-            }
-            trackPos = pos;
-        }
+        const int64_t nowUs = esp_timer_get_time();
+        const double dt = (nowUs - estUs) / 1e6;
+        estUs = nowUs;
         yawPos = pos;
-        yawInGap = inGap;
+        if (!estInit) {
+            if (got) {
+                est = pos;
+                estVel = 0;
+                estInit = true;
+                estPrevRaw = pos;
+            }
+        } else {
+            const double target = -duty / 1000.0 * EST_VMAX;  // 出力が正のとき、位置は減る
+            estVel += (target - estVel) * min(1.0, dt / EST_TAU);
+            const double predicted = est + estVel * dt;
+            bool used = false;
+            if (got) {
+                const bool clamped = pos <= 10 || pos >= 1015;  // 読めない区間の端では 3 か 1022 が返る
+                const double candidate = pos + CIRCLE * round((predicted - pos) / CIRCLE);
+                const bool consistent = !clamped && fabs(candidate - predicted) < EST_TOL;
+                // 読めない区間を抜けた直後(端の値の次に、端のすぐ内側の値が、抜ける向きに動いているときに出た)
+                const bool anchor = !clamped && estPrevRaw >= 0 &&
+                                    ((estPrevRaw <= 10 && pos < 80 && estVel > 0) || (estPrevRaw >= 1015 && pos > 950 && estVel < 0));
+                // 見積もりでは読める場所(読めない区間から離れた所)にいるのに、なめらかに続く読みが食い違い続けたら、
+                // 見積もりのほうが違う(起動したときに読めない区間にいて、でたらめな値を最初の位置にした、など)
+                const double wrapped = wrapTo(predicted, CIRCLE);
+                const bool smooth = !clamped && estPrevRaw >= 0 && abs(pos - estPrevRaw) < 60;
+                estMiss = (!consistent && !anchor && smooth && wrapped > 150 && wrapped < 900) ? estMiss + 1 : 0;
+                if (consistent || anchor) {
+                    estVel = 0.5 * estVel + 0.5 * (candidate - est) / dt;
+                    est = candidate;
+                    used = true;
+                } else if (estMiss >= EST_MISS_MAX) {
+                    est = candidate;
+                    estMiss = 0;
+                    used = true;
+                }
+                estPrevRaw = pos;
+            }
+            if (!used) {
+                est = predicted;
+            }
+        }
         vTaskDelay(pdMS_TO_TICKS(2));
 
         const Drive wanted = driveMode.load();
         const bool changed = wanted != current;
+        if (changed && current == Drive::Calibrate && calibState.load() == Calib::Running) {
+            calibState = calibBefore;  // 調整の途中で止められた
+        }
         current = wanted;
         if (current == Drive::Stop || current == Drive::Walk) {
             const int target = current == Drive::Walk ? walkDuty.load() : 0;
@@ -167,62 +297,78 @@ void driveTask(void*) {
             continue;
         }
 
-        // 旋回: 読んだ位置から、折り返すかを決める
-        if (changed) {
-            prevPos = -1;
-            ccw = Ccw::Start;
-            if (current == Drive::TurnRight) {
-                // 往復の範囲より下にいれば、すぐ下の判定で、位置が増える向きに折り返す。
-                // 読めない区間にいるときは、位置が減る向きのほうが範囲に近いので、区間を出るまで折り返さない
-                writeDuty(TURN_DUTY);
+        if (current == Drive::Calibrate) {
+            const uint32_t now = millis();
+            if (changed) {
+                calibBefore = calibState.load();
+                calibState = Calib::Running;
+                memset(atA, 0, sizeof(atA));
+                memset(atB, 0, sizeof(atB));
+                calibCount = 0;
+                calibPrevUs = 0;
+                calibPrevPos = -1;
+                calibReturning = false;
+                calibStartMs = now;
+                writeDuty(CALIB_DUTY);
             }
-        }
-        const uint32_t now = millis();
-        if (current == Drive::TurnRight) {
-            // 読めなかったときと、読めない区間にいる間は、向きを変えない
-            if (!inGap && got && duty > 0 && pos <= CW_LOW) {
-                writeDuty(-TURN_DUTY);
-            } else if (got && duty < 0 && pos >= CW_HIGH) {
-                writeDuty(TURN_DUTY);
-            }
-        } else {
-            // 続けて読めた 2 つの位置が近いときだけ、通過したと判定する(読めない区間ではでたらめな値が返るため)
-            const bool near = got && prevPos >= 0 && abs(pos - prevPos) < POS_STEP_MAX;
-            if (got && pos <= 10 && ccwArmed == 0) {
-                ccwArmed = 1;
-            } else if (got && pos > 10 && pos < 150 && ccwArmed == 1) {
-                ccwArmed = 2;
-            }
-            if (ccw == Ccw::Down && !ccwSyncMs && near && prevPos > CCW_SYNC && pos <= CCW_SYNC) {
-                ccwSyncMs = now;
-            }
-            if (ccw == Ccw::Start && got) {
-                if (inGap || pos > CCW_UP_FROM) {
-                    // 読めない区間か、その手前にいる: 位置が増える向きに回し、区間を抜けたのを見てから上端で折り返す
-                    enterCcw(Ccw::Back, -TURN_DUTY);
-                } else if (pos > CCW_HIGH) {
-                    enterCcw(Ccw::Seek, TURN_DUTY);  // 上端の少し上にいる: 上端まで下ろしてから往復を始める
-                } else {
-                    enterCcw(Ccw::Back, -TURN_DUTY);
-                    ccwArmed = 2;  // 上端より下の読める位置から始めるので、読めない区間は通らない
+            if (calibReturning) {
+                if (now - calibStartMs >= CALIB_WALK_MS) {
+                    writeDuty(0);
+                    driveMode = Drive::Stop;
                 }
-            } else if (ccw == Ccw::Seek && near && prevPos > CCW_HIGH && pos <= CCW_HIGH) {
-                enterCcw(Ccw::Down, TURN_DUTY);
-            } else if (ccw == Ccw::Down && ((ccwSyncMs && now - ccwSyncMs >= CCW_DELAY_MS) || now - ccwSinceMs >= CCW_DOWN_LIMIT_MS)) {
-                enterCcw(Ccw::Back, -TURN_DUTY);
-            } else if (ccw == Ccw::Back && ccwArmed == 2 && near && prevPos < CCW_HIGH && pos >= CCW_HIGH) {
-                enterCcw(Ccw::Down, TURN_DUTY);
-            } else if ((ccw == Ccw::Back && now - ccwSinceMs >= CCW_BACK_LIMIT_MS) || (ccw == Ccw::Seek && now - ccwSinceMs >= CCW_SEEK_LIMIT_MS)) {
-                // 上端を見失った: 首を止めて、いまの位置から始め直す。回数は操作ページに出す
-                turnLostCount++;
-                writeDuty(0);
-                ccw = Ccw::Start;
-                prevPos = -1;
                 continue;
             }
+            double angle[2];
+            portENTER_CRITICAL(&gyroMux);
+            angle[0] = gyroAngle[0];
+            angle[1] = gyroAngle[1];
+            portEXIT_CRITICAL(&gyroMux);
+            const bool readable = got && pos > 10 && pos < 1015 && calibPrevPos >= 0 && abs(pos - calibPrevPos) < 100;
+            if (calibPrevUs && readable && now - calibStartMs >= CALIB_SKIP_MS) {
+                const double span = (nowUs - calibPrevUs) / 1e6;
+                const double theta = 2 * M_PI * pos / CIRCLE;
+                const double basis[5] = {1.0, cos(theta), sin(theta), cos(2 * theta), sin(2 * theta)};
+                for (int i = 0; i < 5; i++) {
+                    for (int j = 0; j < 5; j++) {
+                        atA[i][j] += basis[i] * basis[j];
+                    }
+                    for (int axis = 0; axis < 2; axis++) {
+                        atB[axis][i] += basis[i] * (angle[axis] - calibPrevAngle[axis]) / span;
+                    }
+                }
+                calibCount++;
+            }
+            calibPrevUs = nowUs;
+            calibPrevAngle[0] = angle[0];
+            calibPrevAngle[1] = angle[1];
+            calibPrevPos = got ? pos : -1;
+            if (now - calibStartMs >= CALIB_WALK_MS) {
+                const int center = centerFromFit(atA, atB, calibCount);
+                if (center >= 0) {
+                    turnCenter = center;
+                    turnCenterDirty = true;
+                    calibState = Calib::Done;
+                } else {
+                    calibState = Calib::Failed;
+                }
+                // 同じ時間、歩いて戻る
+                calibReturning = true;
+                calibStartMs = now;
+                writeDuty(-CALIB_DUTY);
+            }
+            continue;
         }
-        if (got) {
-            prevPos = pos;
+
+        // 旋回: 見積もりが 中心 ± TURN_HALF を越えたら折り返す。中心からの差(−半周〜+半周)で判定するので、
+        // 見積もりを合わせ直して周がずれても、判定は変わらない。始めは、近い側から範囲に入る
+        const double center = turnCenter.load() + (current == Drive::TurnLeft ? CIRCLE / 2 : 0.0);
+        const double offset = est - center - CIRCLE * round((est - center) / CIRCLE);
+        if (changed) {
+            writeDuty(offset < -TURN_HALF ? -TURN_DUTY : TURN_DUTY);
+        } else if (duty > 0 && offset <= -TURN_HALF) {
+            writeDuty(-TURN_DUTY);
+        } else if (duty < 0 && offset >= TURN_HALF) {
+            writeDuty(TURN_DUTY);
         }
     }
 }
@@ -247,7 +393,8 @@ void setStick(int x, int y) {
     stickY = constrain(y, -100, 100);
     lastCommandMs = millis();
     if (abs(stickX) >= STICK_TURN) {
-        driveMode = stickX > 0 ? Drive::TurnRight : Drive::TurnLeft;
+        // 旋回の調整がまだなら、旋回しない(往復の中心が分からない)
+        driveMode = turnCenter.load() < 0 ? Drive::Stop : stickX > 0 ? Drive::TurnRight : Drive::TurnLeft;
     } else if (abs(stickY) >= STICK_DEAD) {
         const int speed = map(abs(stickY), STICK_DEAD, 100, SPEED_MIN, speedLimit);
         const int sign = (invertDirection ? -1 : 1) * (stickY > 0 ? 1 : -1);
@@ -446,12 +593,19 @@ void showChooseScreen() {
 // ---------------------------------------------------------------- ページと API
 void sendJsonState() {
     // drive: 0 停止 / 1 前進 / -1 後退 / 2 右に旋回 / -2 左に旋回(前進・後退は、向きの入れ替えの前の、スティックの向き)
+    // calib: 旋回の調整(0 まだ / 1 調整中 / 2 済み / 3 失敗)、center: 時計回りに回る往復の中心(-1 = まだ)。
+    // 調整中は、歩いて戻り終わるまで 1 を返す(操作ページは、1 の間だけ状態を読み直す)
     const Drive drive = driveMode.load();
     const int code = drive == Drive::TurnRight ? 2 : drive == Drive::TurnLeft ? -2 : drive == Drive::Walk ? (stickY > 0 ? 1 : -1) : 0;
+    float volt = 0;
+    {
+        std::lock_guard<std::mutex> lock(i2cMutex);
+        volt = M5StackChan.getBatteryVoltage();
+    }
     char json[260];
-    snprintf(json, sizeof(json), "{\"drive\":%d,\"invert\":%d,\"smile\":%d,\"limit\":%d,\"volt\":%.2f,\"lost\":%u,\"pos\":%d,\"gap\":%d}", code,
-             invertDirection ? 1 : 0, smileWhileWalking ? 1 : 0, speedLimit, M5StackChan.getBatteryVoltage(),
-             static_cast<unsigned>(turnLostCount.load()), yawPos.load(), yawInGap.load() ? 1 : 0);
+    snprintf(json, sizeof(json), "{\"drive\":%d,\"invert\":%d,\"smile\":%d,\"limit\":%d,\"volt\":%.2f,\"calib\":%d,\"center\":%d,\"pos\":%d}", code,
+             invertDirection ? 1 : 0, smileWhileWalking ? 1 : 0, speedLimit, volt, drive == Drive::Calibrate ? static_cast<int>(Calib::Running) : static_cast<int>(calibState.load()),
+             turnCenter.load(), yawPos.load());
     server.sendHeader("Cache-Control", "no-store");
     server.send(200, "application/json", json);
 }
@@ -477,6 +631,24 @@ void handleInvert() {
     invertDirection = server.arg("on").toInt() != 0;
     prefs.putBool("invert", invertDirection);
     setStick(stickX, stickY);
+    sendJsonState();
+}
+
+// 旋回の調整を始める。床に置いた状態で呼ぶ。歩いて戻るまで約 16 秒かかり、/api/stop で途中でやめられる
+void handleCalibrate() {
+    stickX = stickY = 0;
+    driveMode = Drive::Calibrate;
+    applyExpression();
+    sendJsonState();
+}
+
+// 旋回の調整を消して、未調整に戻す(歩行ベースを替えた、組み直した、など)
+void handleUncalibrate() {
+    stopDrive();
+    turnCenter = -1;
+    turnCenterDirty = false;
+    calibState = Calib::None;
+    prefs.remove("turn");
     sendJsonState();
 }
 
@@ -563,6 +735,8 @@ void startServer() {
         server.on("/api/invert", handleInvert);
         server.on("/api/smile", handleSmile);
         server.on("/api/limit", handleLimit);
+        server.on("/api/calibrate", handleCalibrate);
+        server.on("/api/uncalibrate", handleUncalibrate);
         server.on("/api/forget", handleForget);
         if (mode == Mode::Direct) {
             server.onNotFound(redirectToPage);
@@ -645,8 +819,11 @@ void setup() {
             servoPrefs.end();
         }
     }
-    xTaskCreate(driveTask, "drive", 4096, nullptr, 5, nullptr);
     prefs.begin("strider", false);
+    turnCenter = prefs.getInt("turn", -1);
+    calibState = turnCenter.load() >= 0 ? Calib::Done : Calib::None;
+    xTaskCreate(gyroTask, "gyro", 4096, nullptr, 5, nullptr);
+    xTaskCreate(driveTask, "drive", 8192, nullptr, 5, nullptr);
     invertDirection = prefs.getBool("invert", false);
     smileWhileWalking = prefs.getBool("smile", false);
     speedLimit = constrain(prefs.getInt("limit", SPEED_LIMIT_DEFAULT), SPEED_LIMIT_LOW, SPEED_LIMIT_HIGH);
@@ -665,7 +842,13 @@ void setup() {
 }
 
 void loop() {
-    M5StackChan.update();
+    {
+        std::lock_guard<std::mutex> lock(i2cMutex);
+        M5StackChan.update();
+    }
+    if (turnCenterDirty.exchange(false)) {
+        prefs.putInt("turn", turnCenter.load());
+    }
     server.handleClient();
     const uint32_t now = millis();
 
@@ -714,7 +897,8 @@ void loop() {
             }
         }
         // スマホからの合図が途切れたら止める(電波が切れた、ページを閉じた、など)
-        if (isDriving() && now - lastCommandMs > COMMAND_TIMEOUT_MS) {
+        // 旋回の調整の間は、合図が無くても続ける(終わると自分で止まる)
+        if (isDriving() && driveMode.load() != Drive::Calibrate && now - lastCommandMs > COMMAND_TIMEOUT_MS) {
             stopDrive();
         }
         if (qrUntilMs && now >= qrUntilMs) {
