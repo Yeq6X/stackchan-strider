@@ -18,6 +18,16 @@
 //                                             読めない区間をまたぐ往復。位置が減る向きは、読めない区間に入る手前(位置 40 を
 //                                             下向きに通過)から <遅れミリ秒> たったら折り返す(0.9 秒たっても通過を
 //                                             見なければ、そこで折り返す)。位置が増える向きは w と同じ
+//   e <中心> <半幅> <出力 0〜1000> <ミリ秒>   往復の中心がどこにあっても同じ手順で折り返す往復(どの機体でも使える往復の試験)。
+//                                             <中心> は 1 周を 0〜1151 で表した位置(生の位置と同じ目盛り。1023〜1151 は
+//                                             読めない区間の中)。首の位置の見積もりが 中心 ± 半幅 を越えたら折り返す。
+//                                             見積もりは、読めた位置が直前の見積もりとつじつまが合えばその値、合わなければ
+//                                             (読めない区間)、出力から決めた速さで進めた値。区間を抜けた直後の値で合わせ直す。
+//                                             この往復の記録は、速度の欄に見積もり(0〜1151)、負荷の欄に読めた値を使ったか(1 / 0)が入る
+//                                             <中心> に -1 を書くと、直前の k で求めた時計回りの中心、-2 で反時計回りの中心を使う
+//   k <出力> <ミリ秒>                         脚の位相を調べる: その出力で歩かせ、機体の揺れ(ジャイロ)を首の位置ごとに調べて、
+//                                             旋回の往復の中心を求める。結果は本体に保存し、j で出す
+//   j                                         k の結果を出す(新しい順ではなく、求めた順)
 //   x                                         止める
 //   d                                         直前に回したときの記録を出す
 //   i                                         起動の理由、起動からの時間、Wi-Fi の IP アドレス、加速度を出す
@@ -54,6 +64,7 @@
 #include <WebServer.h>
 #include <WiFi.h>
 #include <esp_flash.h>
+#include <cmath>
 #include <mutex>
 #include <drivers/FTServo_Arduino/src/SCSCL.h>
 #include <drivers/PY32IOExpander/PY32IOExpander.hpp>
@@ -91,6 +102,121 @@ uint32_t hybridSinceMs = 0;  // いまの状態に入った時刻
 int hybridPrevPos = -1;  // 1 つ前に読めた位置
 constexpr int HYBRID_STEP = 100;  // 続けて読んだ位置の差がこれより大きければ、読めない区間の値とみなす(全開で 1 回に約 26)
 constexpr uint32_t HYBRID_BACK_LIMIT_MS = 1500;
+// e の往復: 首の位置の見積もり
+constexpr double CIRCLE = 1152.0;  // 1 周(1 = 0.3125°)
+constexpr double EST_VMAX = 1400.0;  // 全開で回り続けたときの速さの仮定 [位置/秒]
+constexpr double EST_TAU = 0.07;  // 出力を変えてから速さが変わるまでの時定数の仮定 [秒]
+constexpr double EST_TOL = 120.0;  // 読めた位置と見積もりの差がこれより小さければ、読めた位置を使う
+bool estRock = false;
+bool estInit = false, estPlaced = false, estUsed = false;
+double est = 0, estVel = 0;  // 見積もり(巻き戻さない連続の値)と速さ
+// k: 歩行中の揺れから、脚の位相(旋回の往復の中心)を求める。
+// 揺れの速さ [度/秒] を、首の位置 θ(1 周 = 2π)の関数 a0 + a1·cosθ + b1·sinθ + a2·cos2θ + b2·sin2θ に最小二乗で当てはめる。
+// 前後の傾き(IMU の x 軸まわり)は 1 周に 2 回の成分が強く、山の位置が速さによらず安定している(半周ずれた 2 つの候補が残る)。
+// 鉛直まわり(y 軸)は 1 周に 1 回の成分が強いが、山の位置が速さで動くので、2 つの候補のどちらかを選ぶのにだけ使う。
+// 基準は、旋回の中心が分かっている機体(2026-11-20)を出力 60% で歩かせたときの値
+constexpr double REF_PITCH2 = 418.0;  // x 軸の 2 回成分の山の位置(0〜575)
+constexpr double REF_YAW1 = 246.0;  // y 軸の 1 回成分の山の位置(0〜1151)
+constexpr double REF_CW_CENTER = 668.0;  // 上から見て時計回りに回る往復の中心
+constexpr uint32_t CALIB_SKIP_MS = 600;  // 歩き始めてから、この時間は使わない
+bool calibActive = false;
+uint32_t walkStartedMs = 0;  // 首を回し始めた時刻
+double calibAtA[5][5], calibAtB[2][5];  // 正規方程式(軸 0 = x、1 = y)
+int calibCount = 0;
+int64_t calibPrevUs = 0;
+int32_t calibPrevAngle[2] = {0, 0};
+int calibPrevPos = -1;
+int calibDuty = 0;
+int calibCw = -1;  // 求めた時計回りの中心(-1 = まだ)
+constexpr int CALIB_KEEP = 8;
+int calibStored = 0;
+
+void calibReset() {
+    memset(calibAtA, 0, sizeof(calibAtA));
+    memset(calibAtB, 0, sizeof(calibAtB));
+    calibCount = 0;
+    calibPrevUs = 0;
+    calibPrevPos = -1;
+}
+
+// 5 元の連立方程式を解く(部分ピボットつきの消去法)。解けなければ false
+bool solve5(double a[5][5], double b[5], double x[5]) {
+    for (int col = 0; col < 5; col++) {
+        int pivot = col;
+        for (int row = col + 1; row < 5; row++) {
+            if (fabs(a[row][col]) > fabs(a[pivot][col])) {
+                pivot = row;
+            }
+        }
+        if (fabs(a[pivot][col]) < 1e-9) {
+            return false;
+        }
+        for (int k = 0; k < 5; k++) {
+            std::swap(a[col][k], a[pivot][k]);
+        }
+        std::swap(b[col], b[pivot]);
+        for (int row = col + 1; row < 5; row++) {
+            const double f = a[row][col] / a[col][col];
+            for (int k = col; k < 5; k++) {
+                a[row][k] -= f * a[col][k];
+            }
+            b[row] -= f * b[col];
+        }
+    }
+    for (int row = 4; row >= 0; row--) {
+        double sum = b[row];
+        for (int k = row + 1; k < 5; k++) {
+            sum -= a[row][k] * x[k];
+        }
+        x[row] = sum / a[row][row];
+    }
+    return true;
+}
+
+double wrapTo(double value, double period) {
+    return value - period * floor(value / period);
+}
+
+// k の歩行が終わったとき: 当てはめて、旋回の中心を求め、本体に保存する
+void calibFinish() {
+    char text[160];
+    double coef[2][5];
+    bool solved = calibCount >= 100;
+    for (int axis = 0; axis < 2 && solved; axis++) {
+        double a[5][5], b[5];
+        memcpy(a, calibAtA, sizeof(a));
+        memcpy(b, calibAtB[axis], sizeof(b));
+        solved = solve5(a, b, coef[axis]);
+    }
+    if (!solved) {
+        snprintf(text, sizeof(text), "duty=%d n=%d failed", calibDuty, calibCount);
+    } else {
+        const double pitch2 = wrapTo(atan2(coef[0][4], coef[0][3]) / (2 * M_PI) * 1152.0 / 2, 576.0);
+        const double pitch2Amp = hypot(coef[0][3], coef[0][4]);
+        const double yaw1 = wrapTo(atan2(coef[1][2], coef[1][1]) / (2 * M_PI) * 1152.0, 1152.0);
+        const double yaw1Amp = hypot(coef[1][1], coef[1][2]);
+        // 基準からのずれ。半周ずれた 2 つの候補から、鉛直まわりの山の位置が基準に近いほうを選ぶ
+        const double shift = wrapTo(pitch2 - REF_PITCH2, 576.0);
+        const auto miss = [&](double candidate) { return fabs(wrapTo(yaw1 - (REF_YAW1 + candidate) + 576.0, 1152.0) - 576.0); };
+        const double chosen = miss(shift) <= miss(shift + 576.0) ? shift : shift + 576.0;
+        calibCw = static_cast<int>(lround(wrapTo(REF_CW_CENTER + chosen, 1152.0))) % 1152;
+        snprintf(text, sizeof(text), "duty=%d n=%d pitch2=%.0f amp=%.1f yaw1=%.0f amp=%.1f miss=%.0f/%.0f cw=%d", calibDuty, calibCount,
+                 pitch2, pitch2Amp, yaw1, yaw1Amp, miss(shift), miss(shift + 576.0), calibCw);
+    }
+    Preferences store;
+    store.begin("yawprobe", false);
+    store.putString(("k" + String(calibStored % CALIB_KEEP)).c_str(), text);
+    calibStored++;
+    store.putInt("kn", calibStored);
+    store.putInt("kcw", calibCw);
+    store.end();
+}
+
+int estMiss = 0;  // 読める場所にいるはずなのに、読めた位置が見積もりと食い違った回数(続けて)
+constexpr int EST_MISS_MAX = 10;  // これだけ続けて食い違ったら、見積もりのほうが違うとみなして、読めた位置に合わせ直す
+int64_t estUs = 0;
+int estPrevRaw = -1;
+int estCenter = 0, estHalf = 0;
 uint32_t lastIdleLogMs = 0, lastScreenMs = 0;
 size_t sampleCount = 0;  // 記録した数
 
@@ -269,6 +395,8 @@ void writeDuty(int value) {
 
 void stopAll() {
     rocking = false;
+    estRock = false;
+    calibActive = false;
     hybrid = Hybrid::off;
     runUntilMs = 0;
     startAtMs = 0;
@@ -357,6 +485,57 @@ String runCommand(const String& line) {
         runUntilMs = startAtMs + min<uint32_t>(d, RUN_LIMIT_MS);
         return "# ok";
     }
+    if (sscanf(line.c_str(), "k %d %d", &a, &b) == 2) {
+        stopAll();
+        calibReset();
+        calibActive = true;
+        calibDuty = a;
+        if (!queueActive) {
+            sampleCount = 0;
+            runIndex = 0;
+        }
+        startDuty = a;
+        startAtMs = millis() + PREROLL_MS;
+        runUntilMs = startAtMs + min<uint32_t>(b, RUN_LIMIT_MS);
+        return "# ok";
+    }
+    if (line.startsWith("j")) {
+        String out = "# calib n=" + String(calibStored) + " cw=" + String(calibCw);
+        Preferences store;
+        store.begin("yawprobe", true);
+        for (int i = max(0, calibStored - CALIB_KEEP); i < calibStored; i++) {
+            out += " | " + String(i) + ": " + store.getString(("k" + String(i % CALIB_KEEP)).c_str(), "");
+        }
+        store.end();
+        return out;
+    }
+    if (sscanf(line.c_str(), "e %d %d %d %d", &a, &b, &c, &d) == 4) {
+        if (a == -1 || a == -2) {
+            if (calibCw < 0) {
+                return "# no calibration";
+            }
+            a = (calibCw + (a == -2 ? 576 : 0)) % 1152;
+        }
+        if (a < 0 || a >= static_cast<int>(CIRCLE) || b <= 0 || b > 400) {
+            return "# bad range";
+        }
+        stopAll();
+        estRock = true;
+        estInit = estPlaced = false;
+        estPrevRaw = -1;
+        estMiss = 0;
+        estCenter = a;
+        estHalf = b;
+        rockDuty = abs(c);
+        if (!queueActive) {
+            sampleCount = 0;
+            runIndex = 0;
+        }
+        startDuty = 0;
+        startAtMs = millis() + PREROLL_MS;
+        runUntilMs = startAtMs + min<uint32_t>(d, RUN_LIMIT_MS);
+        return "# ok";
+    }
     if (sscanf(line.c_str(), "v %d %d %d %d", &a, &b, &c, &d) == 4) {
         if (a <= HYBRID_SYNC_POS || a >= HYBRID_FAR_MIN || b < 0) {
             return "# bad range";
@@ -410,6 +589,15 @@ String runCommand(const String& line) {
     if (line.startsWith("z")) {
         if (runUntilMs || queueActive) {
             return "# busy";
+        }
+        calibStored = 0;
+        calibCw = -1;
+        {
+            Preferences store;
+            store.begin("yawprobe", false);
+            store.putInt("kn", 0);
+            store.putInt("kcw", -1);
+            store.end();
         }
         storeErase();
         return storeError.isEmpty() ? "# erased" : "# erase failed: " + storeError;
@@ -522,6 +710,13 @@ void setup() {
     M5.Display.setFont(&fonts::lgfxJapanGothic_24);
 
     loadQueue();
+    {
+        Preferences store;
+        store.begin("yawprobe", true);
+        calibStored = store.getInt("kn", 0);
+        calibCw = store.getInt("kcw", -1);
+        store.end();
+    }
     storeLoad();
     xTaskCreate(gyroTask, "gyro", 4096, nullptr, 5, nullptr);
 }
@@ -544,7 +739,11 @@ void loop() {
 
     const uint32_t now = millis();
     if (runUntilMs && now >= runUntilMs) {
+        const bool calibrated = calibActive;
         stopAll();
+        if (calibrated) {
+            calibFinish();
+        }
         if (queueActive) {
             storeAppend();
         }
@@ -561,6 +760,7 @@ void loop() {
     }
     if (startAtMs && now >= startAtMs) {
         startAtMs = 0;
+        walkStartedMs = millis();
         writeDuty(startDuty);
     }
 
@@ -614,6 +814,52 @@ void loop() {
         volt = bus.ReadVoltage(-1);
         temp = bus.ReadTemper(-1);
     }
+    // e の往復: 首の位置の見積もりを進める
+    if (estRock && running) {
+        const double dt = (after - estUs) / 1e6;
+        estUs = after;
+        estUsed = false;
+        if (!estInit) {
+            if (got >= 0) {
+                est = pos;
+                estVel = 0;
+                estInit = true;
+                estPrevRaw = pos;
+                estUsed = true;
+            }
+        } else {
+            // 出力が正のとき、位置は減る
+            const double target = -duty / 1000.0 * EST_VMAX;
+            estVel += (target - estVel) * min(1.0, dt / EST_TAU);
+            const double predicted = est + estVel * dt;
+            if (got >= 0) {
+                const bool clamped = pos <= 10 || pos >= 1015;  // 読めない区間の端では 3 か 1022 が返る
+                const double candidate = pos + CIRCLE * round((predicted - pos) / CIRCLE);
+                const bool consistent = !clamped && fabs(candidate - predicted) < EST_TOL;
+                // 読めない区間を抜けた直後(端の値の次に、端のすぐ内側の値が、抜ける向きに動いているときに出た)
+                const bool anchor = !clamped && estPrevRaw >= 0 &&
+                                    ((estPrevRaw <= 10 && pos < 80 && estVel > 0) || (estPrevRaw >= 1015 && pos > 950 && estVel < 0));
+                // 見積もりでは読める場所(読めない区間から離れた所)にいるのに、なめらかに続く読みが食い違い続けたら、
+                // 見積もりのほうが違う(始めに読めない区間にいて、でたらめな値を最初の位置にした、など)
+                const double wrapped = predicted - CIRCLE * floor(predicted / CIRCLE);
+                const bool smooth = !clamped && estPrevRaw >= 0 && abs(pos - estPrevRaw) < 60;
+                estMiss = (!consistent && !anchor && smooth && wrapped > 150 && wrapped < 900) ? estMiss + 1 : 0;
+                if (consistent || anchor) {
+                    estVel = 0.5 * estVel + 0.5 * (candidate - est) / dt;
+                    est = candidate;
+                    estUsed = true;
+                } else if (estMiss >= EST_MISS_MAX) {
+                    est = candidate;
+                    estMiss = 0;
+                    estUsed = true;
+                }
+                estPrevRaw = pos;
+            }
+            if (!estUsed) {
+                est = predicted;
+            }
+        }
+    }
     Sample sample{static_cast<uint32_t>(after), static_cast<int16_t>(duty),    static_cast<int16_t>(pos),
                   static_cast<int16_t>(speed),  static_cast<int16_t>(load),    static_cast<int16_t>(runIndex),
                   static_cast<int8_t>(volt),    static_cast<int8_t>(temp),     static_cast<uint16_t>(after - before),
@@ -623,6 +869,34 @@ void loop() {
         sample.angle[axis] = static_cast<int32_t>(gyroAngle[axis] * 1000.0);
     }
     portEXIT_CRITICAL(&gyroMux);
+    // k: 揺れの速さを、首の位置ごとに積み上げる
+    if (calibActive && running && !startAtMs) {
+        const int32_t angle[2] = {sample.angle[0], sample.angle[1]};
+        const bool readable = got >= 0 && pos > 10 && pos < 1015 && calibPrevPos >= 0 && abs(pos - calibPrevPos) < 100;
+        if (calibPrevUs && readable && millis() - walkStartedMs >= CALIB_SKIP_MS) {
+            const double dt = (after - calibPrevUs) / 1e6;
+            const double theta = 2 * M_PI * pos / 1152.0;
+            const double basis[5] = {1.0, cos(theta), sin(theta), cos(2 * theta), sin(2 * theta)};
+            for (int i = 0; i < 5; i++) {
+                for (int j = 0; j < 5; j++) {
+                    calibAtA[i][j] += basis[i] * basis[j];
+                }
+                for (int axis = 0; axis < 2; axis++) {
+                    calibAtB[axis][i] += basis[i] * (angle[axis] - calibPrevAngle[axis]) / 1000.0 / dt;
+                }
+            }
+            calibCount++;
+        }
+        calibPrevUs = after;
+        calibPrevAngle[0] = angle[0];
+        calibPrevAngle[1] = angle[1];
+        calibPrevPos = got >= 0 ? pos : -1;
+    }
+    if (estRock && running) {
+        const double wrapped = est - CIRCLE * floor(est / CIRCLE);
+        sample.speed = static_cast<int16_t>(wrapped);
+        sample.load = estUsed ? 1 : 0;
+    }
     if (!running) {
         printSample(sample);
     } else if (sampleCount < SAMPLE_MAX) {
@@ -631,6 +905,18 @@ void loop() {
 
     // 往復: 読めた位置が端を越えたら向きを変える。読めなかったときは向きを変えない(記録には -1 が残る)
     // 出力が正のとき位置の値は減る(2026-11-20 の実機で確認)
+    if (estRock && running && !startAtMs && estInit) {
+        // 中心からの差(−半周〜+半周)で判定する。見積もりを合わせ直して周がずれても、判定は変わらない
+        const double offset = est - estCenter - CIRCLE * round((est - estCenter) / CIRCLE);
+        if (!estPlaced) {
+            estPlaced = true;
+            writeDuty(offset < -estHalf ? -rockDuty : rockDuty);  // 近い側から範囲に入る
+        } else if (duty > 0 && offset <= -estHalf) {
+            writeDuty(-rockDuty);
+        } else if (duty < 0 && offset >= estHalf) {
+            writeDuty(rockDuty);
+        }
+    }
     if (hybrid != Hybrid::off && running && !startAtMs) {
         const uint32_t t = millis();
         // 続けて読めた 2 つの位置が近いときだけ、上端を越えたと判定する(読めない区間ではでたらめな値が返るため)
